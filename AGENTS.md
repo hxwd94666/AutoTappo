@@ -117,9 +117,10 @@ app.rs 的 setup 顺序：
 ### 数据格式
 
 - settings.json 路径：%APPDATA%\AutoTappo\settings.json
-- 位置排列 key：autotappo-room-layout-v3:<account>:<room>
-- 位置存档版本：v3
-- 排列模式：horizontal / vertical
+- 位置排列 key：autotappo-room-layout-v8:<account>:<room>
+- 位置存档版本：v8，仅存模式槽位、锚点和换行数量，不绑定好友 ID
+- 基础好友槽位：19 个；槽位满后追加溢出槽
+- 排列模式：h-left / h-right / v-up / v-down / overlap
 - 一键加数范围：1..=1_000_000
 
 ### 运行行为
@@ -153,7 +154,7 @@ clicker.rs：
 - 键盘模式：F21~F24，随机按住/间隔，礼貌避让；
 - 静默模式：不发送按键，只由 silent.rs 写本地缓存；
 - 锁屏/息屏：session::should_pause() 后完全停手；
-- F4 热键在键盘 worker 内轮询 GetAsyncKeyState。
+- F5 热键在键盘 worker 内轮询 GetAsyncKeyState。
 
 silent.rs：
 
@@ -191,8 +192,17 @@ arrange.rs + web/injected：
 - CDP 注入 room-layout-core.js 和 room-layout.js；
 - 只修改官方 vnode / 位置缓存，不移动真实鼠标；
 - 保存完整壳和可见矩形；
+- 横左/横右/竖上/竖下使用 v8 槽位：自己为锚点，19 个基础好友槽，满后追加；
+- 槽位不绑定好友 ID，新好友填最低空槽，离开时最高占用槽补位；
+- 每行/列数量包含自己；0 或空为到顶换行；
+- 换行方向：横排可选向上/向下，竖排可选向左/向右；
+- 新好友使用同行/列现有好友的平均间距；
+- 自己拖动不带动槽位；切模式时按当前自己位置平移槽位；
+- 手动布局单键：第一次进入编辑，第二次保存；保存时更新好友当前占用槽位；
+- 位置排列默认收起，不记忆展开状态；重置排列已移除；
+- 重叠模式把所有好友猫放在自己壳位置、z-index 5，跟随自己拖动，不写入槽位；
 - 新成员/返回成员有短暂隐藏保护；
-- 观察器改动风险较高，修改后必须实测新进、离线返回、F5/F6、横竖切换；
+- 观察器改动风险较高，修改后必须实测新进、离线返回、F6 手动布局、横竖/重叠切换；
 - 默认单实例，避免两个 worker 互相覆盖模式。
 
 ### 6.5 Web UI
@@ -228,12 +238,13 @@ web/ui/app.js：
     set_auto_arrange
     get_layout_mode
     set_layout_mode
-    reset_layout
+    get_layout_wrap
+    set_layout_wrap
+    get_layout_wrap_dir
+    set_layout_wrap_dir
     get_layout_edit
     get_layout_edit_hotkey
     set_layout_edit_hotkey
-    get_layout_save_hotkey
-    set_layout_save_hotkey
     get_autostart
     set_autostart
 
@@ -272,7 +283,7 @@ Web：
 验收：
 
 - 35 个 Rust 测试；
-- 12 个 Node 布局测试；
+- 21 个 Node 布局测试；
 - 命令名完全对应；
 - 冷启动窗口正常；
 - 托盘退出/重开正常；
@@ -305,7 +316,7 @@ Web：
 
 - 至少运行对应测试；
 - 涉及 Tauri command 时核对前端 invoke；
-- 涉及位置排列时实测 F5/F6、新成员、返回成员；
+- 涉及位置排列时实测 F6 手动布局、新成员、返回成员；
 - 涉及高级开箱时实测失败状态和单次重启；
 - 提交信息写清改动和原因。
 

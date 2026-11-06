@@ -324,6 +324,114 @@
     return fallback(ownCenter - w / 2, baseY);
   }
 
+  function buildDirectionSlots(options) {
+    const opts = options || {};
+    const own = opts.own || null;
+    const size = opts.size || {};
+    const vp = opts.viewport || { width: 1, height: 1 };
+    const count = Math.max(1, Math.floor(Number(opts.count) || 19));
+    if (!own || !(size.w > 0 && size.h > 0)) return [];
+    const w = Number(size.w);
+    const h = Number(size.h);
+    const gap = finite(opts.gap) ? opts.gap : GAP;
+    const margin = finite(opts.margin) ? opts.margin : MARGIN;
+    const mode = opts.mode === 'h-left' || opts.mode === 'v-up' || opts.mode === 'v-down' ? opts.mode : 'h-right';
+    const horizontal = mode === 'h-left' || mode === 'h-right';
+    let wrapItems = Math.max(0, Math.floor(Number(opts.wrap) || 0));
+    if (wrapItems === 1) wrapItems = 2;
+    const wrapDir = Number(opts.wrapDir) === 1 ? 1 : 0;
+    const explicit = wrapItems > 1 ? wrapItems : 0;
+    const stepX = w + gap;
+    const stepY = h + gap;
+    const lineStepX = horizontal ? 0 : (wrapDir === 1 ? -stepX : stepX);
+    const lineStepY = horizontal ? (wrapDir === 1 ? -stepY : stepY) : 0;
+    const firstX = mode === 'h-right' ? own.x + own.w + gap : (mode === 'h-left' ? own.x - gap - w : own.x);
+    const firstY = mode === 'v-up' ? own.y - gap - h : (mode === 'v-down' ? own.y + own.h + gap : own.y);
+    function capacityAt(start, dir) {
+      if (horizontal) {
+        if (dir > 0) return start + w <= vp.width - margin
+          ? Math.floor((vp.width - margin - start - w) / stepX) + 1 : 0;
+        return start >= margin ? Math.floor((start - margin) / stepX) + 1 : 0;
+      }
+      if (dir > 0) return start + h <= vp.height - margin
+        ? Math.floor((vp.height - margin - start - h) / stepY) + 1 : 0;
+      return start >= margin ? Math.floor((start - margin) / stepY) + 1 : 0;
+    }
+    const primaryX = horizontal ? (mode === 'h-left' ? -1 : 1) : 0;
+    const primaryY = horizontal ? 0 : (mode === 'v-up' ? -1 : 1);
+    const capFirst = horizontal
+      ? capacityAt(firstX, primaryX)
+      : capacityAt(firstY, primaryY);
+    const capLater = horizontal
+      ? capacityAt(own.x, primaryX)
+      : capacityAt(own.y, primaryY);
+    if (capFirst < 1) {
+      const opposite = { 'h-right': 'h-left', 'h-left': 'h-right', 'v-up': 'v-down', 'v-down': 'v-up' }[mode];
+      if (opposite && opposite !== mode) {
+        return buildDirectionSlots(Object.assign({}, opts, { mode: opposite }));
+      }
+    }
+    const slots = [];
+    let line = 0;
+    while (slots.length < count && line < 64) {
+      const isFirst = line === 0;
+      const startX = isFirst ? firstX : own.x;
+      const startY = isFirst ? firstY : own.y;
+      const lineCap = isFirst ? capFirst : capLater;
+      const requested = explicit
+        ? (isFirst ? Math.max(1, explicit - 1) : explicit)
+        : lineCap;
+      const maxLine = Math.max(0, Math.min(requested, lineCap));
+      for (let pos = 0; pos < maxLine && slots.length < count; pos++) {
+        const x = startX + (horizontal ? primaryX * pos * stepX : line * lineStepX);
+        const y = startY + (horizontal ? line * lineStepY : primaryY * pos * stepY);
+        if (x + w < margin || x > vp.width - margin || y + h < margin || y > vp.height - margin) continue;
+        slots.push({ x, y, w, h });
+      }
+      line += 1;
+      if (maxLine === 0 && !explicit && line > 2) break;
+    }
+    return slots;
+  }
+
+
+
+  function assignSlots(assignments, onlineIds, slotCount) {
+    const map = new Map();
+    const src = assignments && typeof assignments === 'object' ? assignments : {};
+    for (const [id, raw] of Object.entries(src)) {
+      const idx = Number(raw);
+      if (id && Number.isInteger(idx) && idx >= 0) map.set(String(id), idx);
+    }
+    const ids = [...new Set((onlineIds || []).map(String).filter(Boolean))];
+    const online = new Set(ids);
+    for (const id of [...map.keys()]) if (!online.has(id)) map.delete(id);
+    let count = Math.max(1, Math.floor(Number(slotCount) || 19));
+    for (const idx of map.values()) if (idx >= count) count = idx + 1;
+    for (;;) {
+      const used = new Set(map.values());
+      let low = -1;
+      for (let i = 0; i < count; i++) if (!used.has(i)) { low = i; break; }
+      if (low < 0) break;
+      let high = -1;
+      let highId = '';
+      for (const [id, idx] of map) {
+        if (idx > low && idx > high) { high = idx; highId = id; }
+      }
+      if (high < 0) break;
+      map.set(highId, low);
+    }
+    for (const id of ids) {
+      if (map.has(id)) continue;
+      const used = new Set(map.values());
+      let idx = -1;
+      for (let i = 0; i < count; i++) if (!used.has(i)) { idx = i; break; }
+      if (idx < 0) { idx = count; count += 1; }
+      map.set(id, idx);
+    }
+    return { assignments: Object.fromEntries(map), slotCount: count };
+  }
+
   return {
     VERSION,
     KEY_PREFIX,
@@ -350,6 +458,8 @@
     insideViewport,
     clampRect,
     findSlot,
+    buildDirectionSlots,
+    assignSlots,
     overlapRatio,
     blocked
   };

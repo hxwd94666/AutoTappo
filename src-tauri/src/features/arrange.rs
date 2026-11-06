@@ -16,10 +16,10 @@ const SCRIPT: &str = include_str!("../../../web/injected/room-layout.js");
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static EDIT: AtomicBool = AtomicBool::new(false);
-static EDIT_HOTKEY: AtomicI32 = AtomicI32::new(0x74);
-static SAVE_HOTKEY: AtomicI32 = AtomicI32::new(0x75);
+static EDIT_HOTKEY: AtomicI32 = AtomicI32::new(0x75);
 static LAYOUT_MODE: AtomicU8 = AtomicU8::new(0);
-static RESET_REQUESTED: AtomicBool = AtomicBool::new(false);
+static LAYOUT_WRAP: AtomicU8 = AtomicU8::new(0);
+static LAYOUT_WRAP_DIR: AtomicU8 = AtomicU8::new(0);
 
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::SeqCst)
@@ -30,58 +30,63 @@ pub fn edit() -> bool {
 }
 
 pub fn layout_mode() -> &'static str {
-    if LAYOUT_MODE.load(Ordering::SeqCst) == 2 { "vertical" } else { "horizontal" }
+    match LAYOUT_MODE.load(Ordering::SeqCst) {
+        2 => "h-left",
+        3 => "v-up",
+        4 => "v-down",
+        5 => "overlap",
+        _ => "h-right",
+    }
 }
 
 pub fn set_layout_mode(mode: &str) {
-    let value = if mode.trim().eq_ignore_ascii_case("vertical") { 2 } else { 1 };
+    let value = match mode.trim().to_ascii_lowercase().as_str() {
+        "h-left" => 2,
+        "v-up" => 3,
+        "v-down" => 4,
+        "overlap" => 5,
+        "vertical" => 3,
+        _ => 1,
+    };
     LAYOUT_MODE.store(value, Ordering::SeqCst);
+    if value == 5 {
+        EDIT.store(false, Ordering::SeqCst);
+    }
 }
 
-pub fn request_reset() {
-    RESET_REQUESTED.store(true, Ordering::SeqCst);
+pub fn layout_wrap() -> u8 {
+    LAYOUT_WRAP.load(Ordering::SeqCst)
+}
+
+pub fn set_layout_wrap(wrap: u8) {
+    let wrap = wrap.min(20);
+    LAYOUT_WRAP.store(if wrap == 1 { 2 } else { wrap }, Ordering::SeqCst);
+}
+
+pub fn layout_wrap_dir() -> u8 {
+    LAYOUT_WRAP_DIR.load(Ordering::SeqCst)
+}
+
+pub fn set_layout_wrap_dir(dir: u8) {
+    LAYOUT_WRAP_DIR.store(if dir == 0 { 0 } else { 1 }, Ordering::SeqCst);
 }
 
 fn valid_key(vk: i32, fallback: i32) -> i32 {
-    if vk > 0 && !matches!(vk, 0x76 | 0x77 | 0x78) { vk } else { fallback }
+    if vk > 0 && !matches!(vk, 0x76..=0x78) { vk } else { fallback }
 }
 
 pub fn edit_hotkey() -> i32 {
     EDIT_HOTKEY.load(Ordering::SeqCst)
 }
 
-pub fn save_hotkey() -> i32 {
-    SAVE_HOTKEY.load(Ordering::SeqCst)
-}
-
 pub fn set_edit_hotkey(vk: i32) -> i32 {
-    let vk = valid_key(vk, 0x74);
-    if vk == save_hotkey() {
-        return edit_hotkey();
-    }
+    let vk = valid_key(vk, 0x75);
     EDIT_HOTKEY.store(vk, Ordering::SeqCst);
     vk
 }
 
-pub fn set_save_hotkey(vk: i32) -> i32 {
-    let vk = valid_key(vk, 0x75);
-    if vk == edit_hotkey() {
-        return save_hotkey();
-    }
-    SAVE_HOTKEY.store(vk, Ordering::SeqCst);
-    vk
-}
-
-pub fn set_hotkeys(edit: i32, save: i32) {
-    let edit = valid_key(edit, 0x74);
-    let save = valid_key(save, 0x75);
-    if edit == save {
-        EDIT_HOTKEY.store(0x74, Ordering::SeqCst);
-        SAVE_HOTKEY.store(0x75, Ordering::SeqCst);
-    } else {
-        EDIT_HOTKEY.store(edit, Ordering::SeqCst);
-        SAVE_HOTKEY.store(save, Ordering::SeqCst);
-    }
+pub fn set_hotkeys(edit: i32) {
+    EDIT_HOTKEY.store(valid_key(edit, 0x75), Ordering::SeqCst);
 }
 
 pub fn set_enabled(value: bool) {
@@ -107,13 +112,21 @@ pub fn start_worker() {
                     eval(&mut cdp, CORE);
                     eval(
                         &mut cdp,
-                        if layout_mode() == "vertical" {
-                            "window.__autotappoLayoutMode = 'vertical'"
-                        } else {
-                            "window.__autotappoLayoutMode = 'horizontal'"
+                        match layout_mode() {
+                            "h-left" => "window.__autotappoLayoutMode = 'h-left'",
+                            "v-up" => "window.__autotappoLayoutMode = 'v-up'",
+                            "v-down" => "window.__autotappoLayoutMode = 'v-down'",
+                            "overlap" => "window.__autotappoLayoutMode = 'overlap'",
+                            _ => "window.__autotappoLayoutMode = 'h-right'",
                         },
                     );
+                    let wrap = layout_wrap();
+                    let wrap_dir = layout_wrap_dir();
+                    eval(&mut cdp, &format!("window.__autotappoLayoutWrap = {wrap}"));
+                    eval(&mut cdp, &format!("window.__autotappoLayoutWrapDir = {wrap_dir}"));
                     eval(&mut cdp, SCRIPT);
+                    eval(&mut cdp, &format!("window.__autotappoArrange && window.__autotappoArrange.setWrap && window.__autotappoArrange.setWrap({wrap})"));
+                    eval(&mut cdp, &format!("window.__autotappoArrange && window.__autotappoArrange.setWrapDir && window.__autotappoArrange.setWrapDir({wrap_dir})"));
                     eval(&mut cdp, "window.__autotappoArrange && window.__autotappoArrange.setEnabled(true)");
                     let has_room_api = cdp
                         .evaluate("!!window.__autotappoRoomApi", false)
@@ -133,10 +146,12 @@ pub fn start_worker() {
                     }
                     eval(
                         &mut cdp,
-                        if layout_mode() == "vertical" {
-                            "window.__autotappoArrange && window.__autotappoArrange.setMode('vertical')"
-                        } else {
-                            "window.__autotappoArrange && window.__autotappoArrange.setMode('horizontal')"
+                        match layout_mode() {
+                            "h-left" => "window.__autotappoArrange && window.__autotappoArrange.setMode('h-left')",
+                            "v-up" => "window.__autotappoArrange && window.__autotappoArrange.setMode('v-up')",
+                            "v-down" => "window.__autotappoArrange && window.__autotappoArrange.setMode('v-down')",
+                            "overlap" => "window.__autotappoArrange && window.__autotappoArrange.setMode('overlap')",
+                            _ => "window.__autotappoArrange && window.__autotappoArrange.setMode('h-right')",
                         },
                     );
                     eval(
@@ -147,9 +162,6 @@ pub fn start_worker() {
                             "window.__autotappoArrange && window.__autotappoArrange.setEdit(false)"
                         },
                     );
-                    if RESET_REQUESTED.swap(false, Ordering::SeqCst) {
-                        eval(&mut cdp, "window.__autotappoArrange && window.__autotappoArrange.reset()");
-                    }
                     last_disabled = false;
                 } else if !last_disabled {
                     eval(&mut cdp, "window.__autotappoArrange && window.__autotappoArrange.setEnabled(false)");
@@ -164,21 +176,17 @@ pub fn start_worker() {
 
 fn hotkey_worker() {
     let mut edit_down = false;
-    let mut save_down = false;
     loop {
         let edit_pressed = unsafe { (GetAsyncKeyState(edit_hotkey()) as u16) & 0x8000 != 0 };
-        let save_pressed = unsafe { (GetAsyncKeyState(save_hotkey()) as u16) & 0x8000 != 0 };
-        if ENABLED.load(Ordering::SeqCst) {
-            if edit_pressed && !edit_down {
+        if ENABLED.load(Ordering::SeqCst) && edit_pressed && !edit_down {
+            if layout_mode() == "overlap" {
+                EDIT.store(false, Ordering::SeqCst);
+            } else {
                 let next = !EDIT.load(Ordering::SeqCst);
                 EDIT.store(next, Ordering::SeqCst);
             }
-            if save_pressed && !save_down {
-                EDIT.store(false, Ordering::SeqCst);
-            }
         }
         edit_down = edit_pressed;
-        save_down = save_pressed;
         std::thread::sleep(Duration::from_millis(25));
     }
 }
@@ -198,15 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn hotkeys_reject_reserved_and_duplicate_keys() {
-        set_hotkeys(0x74, 0x75);
+    fn hotkeys_reject_reserved_keys_and_keep_one_layout_key() {
+        set_hotkeys(0x74);
         assert_eq!(edit_hotkey(), 0x74);
-        assert_eq!(save_hotkey(), 0x75);
-        assert_eq!(set_edit_hotkey(0x77), 0x74);
-        assert_eq!(set_edit_hotkey(0x75), 0x74);
-        assert_eq!(set_save_hotkey(0x74), 0x75);
-        set_hotkeys(0x74, 0x74);
-        assert_eq!(edit_hotkey(), 0x74);
-        assert_eq!(save_hotkey(), 0x75);
+        assert_eq!(set_edit_hotkey(0x77), 0x75);
+        assert_eq!(set_edit_hotkey(0x74), 0x74);
+        set_hotkeys(0x75);
+        assert_eq!(edit_hotkey(), 0x75);
     }
 }

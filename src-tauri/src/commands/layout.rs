@@ -29,8 +29,25 @@ pub fn set_layout_mode(mode: String) -> String {
 }
 
 #[tauri::command]
-pub fn reset_layout() {
-    crate::features::arrange::request_reset();
+pub fn get_layout_wrap() -> u8 {
+    crate::features::arrange::layout_wrap()
+}
+
+#[tauri::command]
+pub fn set_layout_wrap(wrap: u8) -> u8 {
+    crate::features::arrange::set_layout_wrap(wrap);
+    crate::features::arrange::layout_wrap()
+}
+
+#[tauri::command]
+pub fn get_layout_wrap_dir() -> u8 {
+    crate::features::arrange::layout_wrap_dir()
+}
+
+#[tauri::command]
+pub fn set_layout_wrap_dir(dir: u8) -> u8 {
+    crate::features::arrange::set_layout_wrap_dir(dir);
+    crate::features::arrange::layout_wrap_dir()
 }
 
 #[tauri::command]
@@ -43,15 +60,6 @@ pub fn set_layout_edit_hotkey(vk: i32) -> i32 {
     crate::features::arrange::set_edit_hotkey(vk)
 }
 
-#[tauri::command]
-pub fn get_layout_save_hotkey() -> i32 {
-    crate::features::arrange::save_hotkey()
-}
-
-#[tauri::command]
-pub fn set_layout_save_hotkey(vk: i32) -> i32 {
-    crate::features::arrange::set_save_hotkey(vk)
-}
 
 #[tauri::command]
 pub fn get_layout_edit() -> bool {

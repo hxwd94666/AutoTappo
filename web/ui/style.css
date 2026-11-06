@@ -396,3 +396,14 @@ button.list-row:hover { background: #fafafa; }
   opacity: .45;
   cursor: not-allowed;
 }
+
+#layout-wrap-dir {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: none;
+  text-align: center;
+  text-align-last: center;
+  padding: 0 6px;
+  cursor: pointer;
+}
+#layout-wrap-dir::-ms-expand { display: none; }

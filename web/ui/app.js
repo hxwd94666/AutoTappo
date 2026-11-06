@@ -37,13 +37,19 @@
   const layoutGroup = $("layout-group");
   const layoutToggle = $("layout-toggle");
   const layoutGroupBody = $("layout-group-body");
-  const layoutHorizontalBtn = $("layout-horizontal");
-  const layoutVerticalBtn = $("layout-vertical");
-  const layoutResetBtn = $("layout-reset");
+  const layoutHLeftBtn = $("layout-h-left");
+  const layoutHRightBtn = $("layout-h-right");
+  const layoutVUpBtn = $("layout-v-up");
+  const layoutVDownBtn = $("layout-v-down");
+  const layoutOverlapBtn = $("layout-overlap");
   const layoutModeSub = $("layout-mode-sub");
-  const layoutResetSub = $("layout-reset-sub");
+  const layoutWrapRow = $("layout-wrap-row");
+  const layoutWrapInput = $("layout-wrap");
+  const layoutWrapSub = $("layout-wrap-sub");
+  const layoutWrapDirRow = $("layout-wrap-dir-row");
+  const layoutWrapDirSelect = $("layout-wrap-dir");
+  const layoutWrapDirSub = $("layout-wrap-dir-sub");
   const layoutEditHotkeyBtn = $("layout-edit-hotkey");
-  const layoutSaveHotkeyBtn = $("layout-save-hotkey");
   const layoutEditSub = $("layout-edit-sub");
   const autostartSwitch = $("autostart-switch");
   const btnMin = $("btn-min");
@@ -55,29 +61,35 @@
   let currentMode = 1;
   let currentRunning = false;
   let currentSpeed = 0;
-  let currentHotkeyName = localStorage.getItem("autotappo_hotkey_name") || "F4";
-  let currentHotkeyVK = parseInt(localStorage.getItem("autotappo_hotkey_vk"), 10) || 0x73;
+  let currentHotkeyName = localStorage.getItem("autotappo_hotkey_name") || "F5";
+  let currentHotkeyVK = parseInt(localStorage.getItem("autotappo_hotkey_vk"), 10) || 0x74;
   let autoChest = localStorage.getItem("autotappo.autoChest") === "1";
   let advancedEnabled = false;
   let autoArrange = false;
-  let layoutMode = "horizontal";
-  let layoutExpanded = localStorage.getItem("autotappo.layoutExpanded") === "1";
+  let layoutMode = "h-right";
+  let layoutWrap = 0;
+  let layoutWrapDir = 0;
+  let layoutExpanded = false;
   let layoutEditing = false;
-  let layoutEditHotkeyVK = parseInt(localStorage.getItem("autotappo_layout_edit_hotkey_vk"), 10) || 0x74;
-  let layoutEditHotkeyName = localStorage.getItem("autotappo_layout_edit_hotkey_name") || "F5";
-  let layoutSaveHotkeyVK = parseInt(localStorage.getItem("autotappo_layout_save_hotkey_vk"), 10) || 0x75;
-  let layoutSaveHotkeyName = localStorage.getItem("autotappo_layout_save_hotkey_name") || "F6";
+  let layoutEditHotkeyVK = parseInt(localStorage.getItem("autotappo_layout_edit_hotkey_vk"), 10) || 0x75;
+  let layoutEditHotkeyName = localStorage.getItem("autotappo_layout_edit_hotkey_name") || "F6";
   let layoutRecording = null;
   let autostartEnabled = false;
   let recording = false;
   let previewInterval = null;
   let previewCount = 0;
 
-  if (currentHotkeyVK === 0x75) {
-    currentHotkeyVK = 0x73;
-    currentHotkeyName = "F4";
-    localStorage.setItem("autotappo_hotkey_vk", "115");
-    localStorage.setItem("autotappo_hotkey_name", "F4");
+  if (currentHotkeyVK === 0x73) {
+    currentHotkeyVK = 0x74;
+    currentHotkeyName = "F5";
+    localStorage.setItem("autotappo_hotkey_vk", "116");
+    localStorage.setItem("autotappo_hotkey_name", "F5");
+  }
+  if (layoutEditHotkeyVK === 0x74) {
+    layoutEditHotkeyVK = 0x75;
+    layoutEditHotkeyName = "F6";
+    localStorage.setItem("autotappo_layout_edit_hotkey_vk", "117");
+    localStorage.setItem("autotappo_layout_edit_hotkey_name", "F6");
   }
   hotkeyValue.textContent = currentHotkeyName;
 
@@ -174,7 +186,19 @@
   }
 
   function layoutModeLabel(mode) {
-    return mode === "vertical" ? "竖排" : "横排";
+    if (mode === 'h-left') return '横左';
+    if (mode === 'h-right') return '横右';
+    if (mode === 'v-up') return '竖上';
+    if (mode === 'v-down') return '竖下';
+    if (mode === 'overlap') return '重叠';
+    return '横右';
+  }
+
+  function layoutModeHint(mode) {
+    if (mode === 'h-left') return '好友从自己左侧同排开始';
+    if (mode === 'v-up') return '好友从自己上方同列开始';
+    if (mode === 'v-down') return '好友从自己下方同列开始';
+    return '好友从自己右侧同排开始';
   }
 
   function renderLayoutHotkeys() {
@@ -184,31 +208,56 @@
       layoutRecording = null;
     }
     arrangeSwitch.disabled = !advancedEnabled;
-    arrangeSwitch.setAttribute("aria-disabled", advancedEnabled ? "false" : "true");
-    arrangeSwitch.setAttribute("aria-checked", autoArrange ? "true" : "false");
+    arrangeSwitch.setAttribute('aria-disabled', advancedEnabled ? 'false' : 'true');
+    arrangeSwitch.setAttribute('aria-checked', autoArrange ? 'true' : 'false');
+    const overlapMode = layoutMode === 'overlap';
+    if (overlapMode) layoutEditing = false;
     const layoutDisabled = !advancedEnabled || !autoArrange || layoutEditing;
-    layoutHorizontalBtn.disabled = layoutDisabled;
-    layoutVerticalBtn.disabled = layoutDisabled;
-    layoutResetBtn.disabled = layoutDisabled;
-    layoutHorizontalBtn.classList.toggle("active", layoutMode === "horizontal");
-    layoutVerticalBtn.classList.toggle("active", layoutMode === "vertical");
+    layoutHLeftBtn.disabled = layoutDisabled;
+    layoutHRightBtn.disabled = layoutDisabled;
+    layoutVUpBtn.disabled = layoutDisabled;
+    layoutVDownBtn.disabled = layoutDisabled;
+    layoutOverlapBtn.disabled = layoutDisabled;
+    layoutHLeftBtn.classList.toggle('active', layoutMode === 'h-left');
+    layoutHRightBtn.classList.toggle('active', layoutMode === 'h-right');
+    layoutVUpBtn.classList.toggle('active', layoutMode === 'v-up');
+    layoutVDownBtn.classList.toggle('active', layoutMode === 'v-down');
+    layoutOverlapBtn.classList.toggle('active', overlapMode);
     layoutModeSub.textContent = !advancedEnabled || !autoArrange
-      ? "开启位置排列后可用"
-      : (layoutMode === "vertical" ? "新好友从自己上方竖排" : "新好友排在自己下方");
-    layoutResetSub.textContent = layoutEditing ? "退出编辑后可重置" : "清除当前房间的位置记忆";
-    layoutEditHotkeyBtn.disabled = !advancedEnabled || !autoArrange;
-    layoutSaveHotkeyBtn.disabled = !advancedEnabled || !autoArrange;
-    layoutEditHotkeyBtn.classList.toggle("recording", layoutRecording === "edit");
-    layoutSaveHotkeyBtn.classList.toggle("recording", layoutRecording === "save");
-    layoutEditHotkeyBtn.textContent = layoutRecording === "edit" ? "…" : layoutEditHotkeyName;
-    layoutSaveHotkeyBtn.textContent = layoutRecording === "save" ? "…" : layoutSaveHotkeyName;
+      ? '开启位置排列后可用'
+      : (overlapMode ? '所有好友叠在自己身后，拖动时跟随' : layoutModeHint(layoutMode));
+    layoutWrapRow.hidden = overlapMode;
+    layoutWrapInput.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    if (document.activeElement !== layoutWrapInput) {
+      layoutWrapInput.value = layoutWrap > 0 ? String(layoutWrap) : '';
+    }
+    layoutWrapSub.textContent = overlapMode
+      ? '重叠模式不使用换行'
+      : (layoutMode === 'h-left' || layoutMode === 'h-right'
+        ? '每行数量，包含自己；0 或空为到顶'
+        : '每列数量，包含自己；0 或空为到顶');
+    const horizontalMode = layoutMode === 'h-left' || layoutMode === 'h-right';
+    layoutWrapDirRow.hidden = overlapMode;
+    layoutWrapDirSelect.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    layoutWrapDirSelect.options[0].textContent = horizontalMode ? '向下' : '向右';
+    layoutWrapDirSelect.options[1].textContent = horizontalMode ? '向上' : '向左';
+    layoutWrapDirSelect.value = String(layoutWrapDir);
+    layoutWrapDirSub.textContent = overlapMode
+      ? '重叠模式不使用换行方向'
+      : (horizontalMode
+        ? (layoutWrapDir === 1 ? '换行到上一行' : '换行到下一行')
+        : (layoutWrapDir === 1 ? '换行到左侧一列' : '换行到右侧一列'));
+    layoutEditHotkeyBtn.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    layoutEditHotkeyBtn.classList.toggle('recording', layoutRecording === 'edit');
+    layoutEditHotkeyBtn.textContent = layoutRecording === 'edit' ? '…' : layoutEditHotkeyName;
     arrangeSub.textContent = !advancedEnabled
-      ? "需先开启高级开箱"
-      : (autoArrange ? "已开启 · " + layoutModeLabel(layoutMode) : "已关闭");
+      ? '需先开启高级开箱'
+      : (autoArrange ? '已开启 · ' + layoutModeLabel(layoutMode) : '已关闭');
     layoutEditSub.textContent = !advancedEnabled || !autoArrange
-      ? "开启位置排列后可用"
-      : (layoutEditing ? "位置排列 · 编辑中，按保存快捷键完成" : "位置排列 · 快捷键进入编辑");
+      ? '开启位置排列后可用'
+      : (overlapMode ? '重叠模式不使用编辑' : (layoutEditing ? '手动布局 · 编辑中，按第二次完成编辑' : '手动布局 · 按一次进入编辑，按第二次完成编辑'));
   }
+
 
   async function syncLayoutHotkeys() {
     if (!isTauri) {
@@ -219,12 +268,13 @@
     try {
       if (advancedEnabled) {
         autoArrange = !!(await invoke("get_auto_arrange"));
-        layoutMode = String(await invoke("get_layout_mode")) === "vertical" ? "vertical" : "horizontal";
+        const modeValue = String(await invoke("get_layout_mode"));
+        layoutMode = ["h-left", "h-right", "v-up", "v-down", "overlap"].includes(modeValue) ? modeValue : "h-right";
+        layoutWrap = Math.max(0, Number(await invoke("get_layout_wrap")) || 0);
+        layoutWrapDir = Number(await invoke("get_layout_wrap_dir")) === 1 ? 1 : 0;
         layoutEditing = !!(await invoke("get_layout_edit"));
-        layoutEditHotkeyVK = Number(await invoke("get_layout_edit_hotkey")) || 0x74;
-        layoutSaveHotkeyVK = Number(await invoke("get_layout_save_hotkey")) || 0x75;
+        layoutEditHotkeyVK = Number(await invoke("get_layout_edit_hotkey")) || 0x75;
         layoutEditHotkeyName = vkLabel(layoutEditHotkeyVK);
-        layoutSaveHotkeyName = vkLabel(layoutSaveHotkeyVK);
       } else {
         layoutEditing = false;
       }
@@ -425,7 +475,7 @@
       hotkeyValue.textContent = "F7/F8/F9 不可用";
       return;
     }
-    if (vk === layoutEditHotkeyVK || vk === layoutSaveHotkeyVK) {
+    if (vk === layoutEditHotkeyVK) {
       hotkeyValue.textContent = "布局快捷键占用";
       return;
     }
@@ -458,34 +508,25 @@
     if (!target) return;
     const vk = keyToVK(e);
     if (!vk) return;
-    const targetBtn = target === "edit" ? layoutEditHotkeyBtn : layoutSaveHotkeyBtn;
-    const otherVK = target === "edit" ? layoutSaveHotkeyVK : layoutEditHotkeyVK;
+    const targetBtn = layoutEditHotkeyBtn;
     if (vk === 0x76 || vk === 0x77 || vk === 0x78) {
       targetBtn.textContent = "禁用";
       targetBtn.title = "F7/F8/F9 为官方保留键";
       setTimeout(renderLayoutHotkeys, 900);
       return;
     }
-    if (vk === currentHotkeyVK || vk === otherVK) {
+    if (vk === currentHotkeyVK) {
       targetBtn.textContent = "占用";
       targetBtn.title = "该键已被其它功能占用";
       setTimeout(renderLayoutHotkeys, 900);
       return;
     }
     const name = keyName(e, vk);
-    if (target === "edit") {
-      layoutEditHotkeyVK = vk;
-      layoutEditHotkeyName = name;
-      localStorage.setItem("autotappo_layout_edit_hotkey_vk", String(vk));
-      localStorage.setItem("autotappo_layout_edit_hotkey_name", name);
-      if (isTauri) invoke("set_layout_edit_hotkey", { vk }).catch(() => {});
-    } else {
-      layoutSaveHotkeyVK = vk;
-      layoutSaveHotkeyName = name;
-      localStorage.setItem("autotappo_layout_save_hotkey_vk", String(vk));
-      localStorage.setItem("autotappo_layout_save_hotkey_name", name);
-      if (isTauri) invoke("set_layout_save_hotkey", { vk }).catch(() => {});
-    }
+    layoutEditHotkeyVK = vk;
+    layoutEditHotkeyName = name;
+    localStorage.setItem("autotappo_layout_edit_hotkey_vk", String(vk));
+    localStorage.setItem("autotappo_layout_edit_hotkey_name", name);
+    if (isTauri) invoke("set_layout_edit_hotkey", { vk }).catch(() => {});
     stopLayoutRecord();
   }
 
@@ -498,7 +539,6 @@
   }
 
   layoutEditHotkeyBtn.addEventListener("click", () => startLayoutRecord("edit"));
-  layoutSaveHotkeyBtn.addEventListener("click", () => startLayoutRecord("save"));
 
   // ---------- 自动开箱 ----------
   chestSwitch.addEventListener("click", async () => {
@@ -564,7 +604,6 @@
   // ---------- 位置排列 ----------
   function toggleLayoutGroup() {
     layoutExpanded = !layoutExpanded;
-    localStorage.setItem("autotappo.layoutExpanded", layoutExpanded ? "1" : "0");
     renderLayoutGroup();
   }
 
@@ -595,21 +634,35 @@
     if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
     try {
       const actual = String(await invoke("set_layout_mode", { mode }));
-      layoutMode = actual === "vertical" ? "vertical" : "horizontal";
+      layoutMode = ["h-left", "h-right", "v-up", "v-down", "overlap"].includes(actual) ? actual : "h-right";
     } catch (e) {}
     renderLayoutHotkeys();
   }
 
-  layoutHorizontalBtn.addEventListener("click", () => applyLayoutMode("horizontal"));
-  layoutVerticalBtn.addEventListener("click", () => applyLayoutMode("vertical"));
-  layoutResetBtn.addEventListener("click", async () => {
+  layoutHLeftBtn.addEventListener("click", () => applyLayoutMode("h-left"));
+  layoutHRightBtn.addEventListener("click", () => applyLayoutMode("h-right"));
+  layoutVUpBtn.addEventListener("click", () => applyLayoutMode("v-up"));
+  layoutVDownBtn.addEventListener("click", () => applyLayoutMode("v-down"));
+  layoutOverlapBtn.addEventListener("click", () => applyLayoutMode("overlap"));
+  layoutWrapInput.addEventListener("change", async () => {
     if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
-    if (!window.confirm("重置当前房间的好友排列位置？")) return;
+    let wrap = Math.floor(Number(layoutWrapInput.value) || 0);
+    wrap = Math.max(0, Math.min(20, wrap));
+    if (wrap === 1) wrap = 2;
     try {
-      await invoke("reset_layout");
-      setTimeout(syncLayoutHotkeys, 900);
+      layoutWrap = Math.max(0, Number(await invoke("set_layout_wrap", { wrap })) || 0);
     } catch (e) {}
+    renderLayoutHotkeys();
   });
+  layoutWrapDirSelect.addEventListener("change", async () => {
+    if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
+    const dir = Number(layoutWrapDirSelect.value) === 1 ? 1 : 0;
+    try {
+      layoutWrapDir = Number(await invoke("set_layout_wrap_dir", { dir })) === 1 ? 1 : 0;
+    } catch (e) {}
+    renderLayoutHotkeys();
+  });
+
 
   // ---------- 开机自启 ----------
   autostartSwitch.addEventListener("click", async () => {

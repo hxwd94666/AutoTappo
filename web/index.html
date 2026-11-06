@@ -39,7 +39,7 @@
             <span class="number" id="counter">0</span>
             <span class="number-label" id="counter-label">本次静默注入</span>
           </div>
-          <button id="btn-toggle" class="primary compact">开始静默 (F4)</button>
+          <button id="btn-toggle" class="primary compact">开始静默 (F5)</button>
         </div>
 
         <div id="silent-panel">
@@ -71,7 +71,7 @@
             <span class="row-label">全局热键</span>
             <span class="row-sub">开始 / 暂停刷数</span>
           </div>
-          <button class="hotkey-badge" id="hotkey-value" type="button" aria-label="设置全局热键" title="点击修改全局热键">F4</button>
+          <button class="hotkey-badge" id="hotkey-value" type="button" aria-label="设置全局热键" title="点击修改全局热键">F5</button>
         </div>
         <div class="list-row">
           <div class="row-main">
@@ -126,33 +126,39 @@
             <div class="list-row">
               <div class="row-main">
                 <span class="row-label">排列方式</span>
-                <span class="row-sub" id="layout-mode-sub">保持官方默认位置</span>
+                <span class="row-sub" id="layout-mode-sub">新好友排在自己右侧</span>
               </div>
               <div class="mode-group">
-                <button class="mode-btn active" id="layout-horizontal" type="button">横排</button>
-                <button class="mode-btn" id="layout-vertical" type="button">竖排</button>
+                <button class="mode-btn" id="layout-h-left" type="button">横左</button>
+                <button class="mode-btn active" id="layout-h-right" type="button">横右</button>
+                <button class="mode-btn" id="layout-v-up" type="button">竖上</button>
+                <button class="mode-btn" id="layout-v-down" type="button">竖下</button>
+                <button class="mode-btn" id="layout-overlap" type="button">重叠</button>
               </div>
+            </div>
+            <div class="list-row" id="layout-wrap-row">
+              <div class="row-main">
+                <span class="row-label">换行数量</span>
+                <span class="row-sub" id="layout-wrap-sub">包含自己，0 或不填为到顶</span>
+              </div>
+              <input class="add-input" id="layout-wrap" type="number" min="0" max="20" step="1" inputmode="numeric" placeholder="自动" aria-label="换行数量，包含自己">
+            </div>
+            <div class="list-row" id="layout-wrap-dir-row">
+              <div class="row-main">
+                <span class="row-label">换行方向</span>
+                <span class="row-sub" id="layout-wrap-dir-sub">横排换行到下方</span>
+              </div>
+              <select class="add-input" id="layout-wrap-dir" aria-label="换行方向">
+                <option value="0">向下</option>
+                <option value="1">向上</option>
+              </select>
             </div>
             <div class="list-row">
               <div class="row-main">
-                <span class="row-label">重置排列</span>
-                <span class="row-sub" id="layout-reset-sub">清除当前房间的位置记忆</span>
+                <span class="row-label">手动布局</span>
+                <span class="row-sub" id="layout-edit-sub">按一次进入编辑，按第二次完成编辑</span>
               </div>
-              <button class="mode-btn" id="layout-reset" type="button">重置</button>
-            </div>
-            <div class="list-row">
-              <div class="row-main">
-                <span class="row-label">编辑布局</span>
-                <span class="row-sub" id="layout-edit-sub">位置排列 · 快捷键进入编辑</span>
-              </div>
-              <button class="hotkey-badge" id="layout-edit-hotkey" type="button" aria-label="设置编辑布局快捷键" title="点击修改编辑布局快捷键">F5</button>
-            </div>
-            <div class="list-row">
-              <div class="row-main">
-                <span class="row-label">保存布局</span>
-                <span class="row-sub">位置排列 · 快捷键保存并退出</span>
-              </div>
-              <button class="hotkey-badge" id="layout-save-hotkey" type="button" aria-label="设置保存布局快捷键" title="点击修改保存布局快捷键">F6</button>
+              <button class="hotkey-badge" id="layout-edit-hotkey" type="button" aria-label="设置手动布局快捷键" title="点击修改手动布局快捷键">F6</button>
             </div>
           </div>
         </div>

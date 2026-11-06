@@ -3,7 +3,7 @@
 //! 1. 采用 F21~F24 (0x84~0x87) 顶级幻影键，不打出乱码，不冲突快捷键；
 //! 2. 毫秒级侦测用户物理操作 (打字、Shift 切输入法、鼠标拖拽/划词)，实时礼貌避让；
 //! 3. 绝对 0 鼠标位移干涉，原生物理手感；
-//! 4. 支持全局热键自定义 (默认 F4，支持动态切换)。
+//! 4. 支持全局热键自定义 (默认 F5，支持动态切换)。
 
 use rand::Rng;
 use std::ffi::c_void;
@@ -42,8 +42,8 @@ extern "system" {
 // 幻影键 (F21 ~ F24)
 const PHANTOM_KEYS: [u8; 4] = [0x84, 0x85, 0x86, 0x87];
 
-// 默认快捷键: F4 (0x73)
-pub const DEFAULT_HOTKEY_VK: i32 = 0x73;
+// 默认快捷键: F5 (0x74)
+pub const DEFAULT_HOTKEY_VK: i32 = 0x74;
 
 // 需避让的物理按键：鼠标按键、修饰键、字母数字及标点
 fn is_key_down(vk: i32) -> bool {

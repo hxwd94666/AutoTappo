@@ -140,3 +140,75 @@ test('findSlot centers a multi-friend horizontal row around own', () => {
   assert.equal(second.y, first.y);
   assert.ok(second.x !== first.x);
 });
+test('assignSlots fills 19 base slots in order', () => {
+  const ids = Array.from({ length: 19 }, (_, i) => 'c' + i);
+  const out = core.assignSlots({}, ids, 19);
+  assert.equal(out.slotCount, 19);
+  ids.forEach((id, i) => assert.equal(out.assignments[id], i));
+});
+
+test('assignSlots appends a 20th slot when full', () => {
+  const ids = Array.from({ length: 20 }, (_, i) => 'c' + i);
+  const out = core.assignSlots({}, ids, 19);
+  assert.equal(out.slotCount, 20);
+  assert.equal(out.assignments.c19, 19);
+});
+
+test('assignSlots moves highest slot into a middle gap', () => {
+  const before = core.assignSlots({}, ['a', 'b', 'c', 'd', 'e'], 19);
+  const out = core.assignSlots(before.assignments, ['a', 'b', 'd', 'e'], 19);
+  assert.equal(out.assignments.a, 0);
+  assert.equal(out.assignments.b, 1);
+  assert.equal(out.assignments.e, 2);
+  assert.equal(out.assignments.d, 3);
+  assert.equal(out.assignments.c, undefined);
+});
+
+test('assignSlots fills a later empty slot with a new friend', () => {
+  const before = core.assignSlots({}, ['a', 'b', 'c', 'd'], 19);
+  const out = core.assignSlots(before.assignments, ['a', 'b', 'c', 'd', 'new'], 19);
+  assert.equal(out.assignments.new, 4);
+  assert.equal(out.slotCount, 19);
+});
+
+test('assignSlots keeps a late free slot after highest friend leaves', () => {
+  const before = core.assignSlots({}, ['a', 'b', 'c'], 19);
+  const out = core.assignSlots(before.assignments, ['a', 'b'], 19);
+  assert.equal(out.assignments.a, 0);
+  assert.equal(out.assignments.b, 1);
+  assert.equal(out.slotCount, 19);
+});
+test('buildDirectionSlots starts horizontal right on own row and wraps by count', () => {
+  const own = { x: 100, y: 100, w: 100, h: 100 };
+  const slots = core.buildDirectionSlots({ mode: 'h-right', own, size: { w: 100, h: 100 }, viewport: VP, wrap: 6, count: 19 });
+  assert.equal(slots[0].x, own.x + own.w + core.GAP);
+  assert.equal(slots[0].y, own.y);
+  assert.equal(slots[4].y, own.y);
+  assert.equal(slots[5].y, own.y + own.h + core.GAP);
+  assert.equal(slots[5].x, own.x);
+});
+
+test('buildDirectionSlots starts vertical up on own column and wraps by count', () => {
+  const own = { x: 100, y: 500, w: 100, h: 100 };
+  const slots = core.buildDirectionSlots({ mode: 'v-up', own, size: { w: 100, h: 100 }, viewport: VP, wrap: 5, count: 19 });
+  assert.equal(slots[0].x, own.x);
+  assert.equal(slots[0].y, own.y - core.GAP - own.h);
+  assert.equal(slots[3].y, own.y - core.GAP - own.h - 3 * (own.h + core.GAP));
+  assert.equal(slots[4].x, own.x + own.w + core.GAP);
+  assert.equal(slots[4].y, own.y);
+});
+
+test('buildDirectionSlots auto wrap fills to the edge', () => {
+  const own = { x: 100, y: 100, w: 100, h: 100 };
+  const slots = core.buildDirectionSlots({ mode: 'h-right', own, size: { w: 100, h: 100 }, viewport: VP, wrap: 0, count: 19 });
+  assert.ok(slots.length >= 17);
+  assert.equal(slots[0].y, own.y);
+  assert.ok(slots.every((s) => s.x + s.w <= VP.width - core.MARGIN));
+});
+
+test('buildDirectionSlots does not jump to the opposite side at the edge', () => {
+  const own = { x: 1940, y: 100, w: 80, h: 100 };
+  const slots = core.buildDirectionSlots({ mode: 'h-right', own, size: { w: 100, h: 100 }, viewport: VP, wrap: 0, count: 19 });
+  assert.ok(slots.length > 0);
+  assert.ok(slots[0].x + slots[0].w <= own.x);
+});

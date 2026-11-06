@@ -9,7 +9,7 @@ use crate::features::chest::ChestController;
 use crate::features::clicker::ClickerController;
 use crate::features::silent::SilentController;
 
-const DEFAULT_HOTKEY_VK: i32 = 0x73; // F4
+const DEFAULT_HOTKEY_VK: i32 = 0x74; // F5
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -21,12 +21,14 @@ pub struct Settings {
     /// 键盘模式速度档位
     pub speed: u8,
     pub hotkey_vk: i32,
-    pub layout_edit_hotkey_vk: i32,
-    pub layout_save_hotkey_vk: i32,
-    pub auto_chest: bool,
+    pub layout_edit_hotkey_vk: i32,    pub auto_chest: bool,
     pub advanced: bool,
     pub auto_arrange: bool,
     pub layout_mode: String,
+    #[serde(default)]
+    pub layout_wrap: u8,
+    #[serde(default)]
+    pub layout_wrap_dir: u8,
     pub lock_screen: bool,
     pub hidden: bool,
 }
@@ -38,12 +40,12 @@ impl Default for Settings {
             running: false,
             speed: 0,
             hotkey_vk: DEFAULT_HOTKEY_VK,
-            layout_edit_hotkey_vk: 0x74,
-            layout_save_hotkey_vk: 0x75,
-            auto_chest: false,
+            layout_edit_hotkey_vk: 0x75,            auto_chest: false,
             advanced: false,
             auto_arrange: false,
-            layout_mode: "horizontal".into(),
+            layout_mode: "h-right".into(),
+            layout_wrap: 0,
+            layout_wrap_dir: 0,
             lock_screen: false,
             hidden: false,
         }
@@ -59,10 +61,12 @@ impl Settings {
             .ok()
             .and_then(|b| serde_json::from_slice::<Self>(&b).ok())
             .unwrap_or_default();
-        // F6 已让位给“保存布局”，旧配置迁回默认 F4。
-        if s.hotkey_vk == 0x75 {
+        // 旧默认 F4 → 新默认 F5；旧手动布局 F5 → 新 F6。
+        if s.hotkey_vk == 0x73 {
             s.hotkey_vk = DEFAULT_HOTKEY_VK;
         }
+        if s.layout_edit_hotkey_vk == 0x74 {
+            s.layout_edit_hotkey_vk = 0x75;        }
         s
     }
 
@@ -98,12 +102,12 @@ impl Settings {
             running,
             speed: clicker.speed_mode.load(Ordering::Relaxed).min(2),
             hotkey_vk: clicker.hotkey_vk.load(Ordering::Relaxed),
-            layout_edit_hotkey_vk: crate::features::arrange::edit_hotkey(),
-            layout_save_hotkey_vk: crate::features::arrange::save_hotkey(),
-            auto_chest: chest.enabled.load(Ordering::Relaxed),
+            layout_edit_hotkey_vk: crate::features::arrange::edit_hotkey(),            auto_chest: chest.enabled.load(Ordering::Relaxed),
             advanced: advanced_on,
             auto_arrange: crate::features::arrange::enabled(),
             layout_mode: crate::features::arrange::layout_mode().to_string(),
+            layout_wrap: crate::features::arrange::layout_wrap(),
+            layout_wrap_dir: crate::features::arrange::layout_wrap_dir(),
             lock_screen: advanced_on,
             hidden: advanced_on,
         }
@@ -124,8 +128,10 @@ impl Settings {
             if self.hotkey_vk > 0 { self.hotkey_vk } else { DEFAULT_HOTKEY_VK },
             Ordering::SeqCst,
         );
-        crate::features::arrange::set_hotkeys(self.layout_edit_hotkey_vk, self.layout_save_hotkey_vk);
+        crate::features::arrange::set_hotkeys(self.layout_edit_hotkey_vk);
         crate::features::arrange::set_layout_mode(&self.layout_mode);
+        crate::features::arrange::set_layout_wrap(self.layout_wrap);
+        crate::features::arrange::set_layout_wrap_dir(self.layout_wrap_dir);
         if mode == 1 {
             silent.running.store(self.running, Ordering::SeqCst);
             clicker.running.store(false, Ordering::SeqCst);
@@ -161,12 +167,12 @@ mod tests {
             running: true,
             speed: 2,
             hotkey_vk: 0x76,
-            layout_edit_hotkey_vk: 0x74,
-            layout_save_hotkey_vk: 0x75,
-            auto_chest: true,
+            layout_edit_hotkey_vk: 0x75,            auto_chest: true,
             advanced: true,
             auto_arrange: false,
-            layout_mode: "horizontal".into(),
+            layout_mode: "h-right".into(),
+            layout_wrap: 0,
+            layout_wrap_dir: 0,
             lock_screen: true,
             hidden: true,
         };
@@ -186,12 +192,12 @@ mod tests {
             running: true,
             speed: 2,
             hotkey_vk: 0x76,
-            layout_edit_hotkey_vk: 0x74,
-            layout_save_hotkey_vk: 0x75,
-            auto_chest: true,
+            layout_edit_hotkey_vk: 0x75,            auto_chest: true,
             advanced: true,
             auto_arrange: false,
-            layout_mode: "horizontal".into(),
+            layout_mode: "h-right".into(),
+            layout_wrap: 0,
+            layout_wrap_dir: 0,
             lock_screen: true,
             hidden: true,
         };
@@ -209,9 +215,7 @@ mod tests {
         assert_eq!(back.hotkey_vk, 0x76);
         assert!(back.auto_chest);
         assert!(back.advanced);
-        assert_eq!(back.layout_edit_hotkey_vk, 0x74);
-        assert_eq!(back.layout_save_hotkey_vk, 0x75);
-    }
+        assert_eq!(back.layout_edit_hotkey_vk, 0x75);    }
 
     #[test]
     fn missing_fields_use_defaults() {
@@ -219,6 +223,7 @@ mod tests {
         assert_eq!(back.mode, 0);
         assert_eq!(back.hotkey_vk, DEFAULT_HOTKEY_VK);
         assert!(!back.running);
-        assert_eq!(back.layout_mode, "horizontal");
+        assert_eq!(back.layout_mode, "h-right");
+        assert_eq!(back.layout_wrap, 0);
     }
 }
