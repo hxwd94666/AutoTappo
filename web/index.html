@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoTappo</title>
+  <link rel="stylesheet" href="ui/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="titlebar">
+    <div class="titlebar-brand">
+      <span class="titlebar-name">AutoTappo</span>
+    </div>
+    <div class="titlebar-fill"></div>
+    <div class="titlebar-actions">
+      <button id="btn-min" class="win-btn" aria-label="最小化">—</button>
+      <button id="btn-close" class="win-btn close" aria-label="关闭">✕</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="section">
+      <div class="section-head">
+        <span class="section-title">刷数方式</span>
+        <div class="segmented" id="mode-tabs">
+          <button class="seg active" data-mode="1">静默</button>
+          <button class="seg" data-mode="0">键盘</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="run-top">
+          <div class="status"><span id="status-dot" class="status-dot"></span><span id="status-text">已暂停</span></div>
+          <span class="hero-mode" id="hero-mode">静默模式</span>
+        </div>
+        <div class="run-main">
+          <div class="run-number">
+            <span class="number" id="counter">0</span>
+            <span class="number-label" id="counter-label">本次静默注入</span>
+          </div>
+          <button id="btn-toggle" class="primary compact">开始静默 (F4)</button>
+        </div>
+
+        <div id="silent-panel">
+          <div class="row"><span class="row-label">30 分钟预算</span><span class="row-value">2000~2150 次</span></div>
+          <div class="row"><span class="row-label">本轮 / 累计</span><span class="row-value" id="silent-total">0 / 0</span></div>
+        </div>
+        <div class="hint" id="silent-status">静默模式在锁屏/隐藏桌宠时仍生效，不影响桌宠动画</div>
+
+        <div class="speed-cards" id="speed-panel" hidden>
+          <button data-speed="0" class="speed-btn active">
+            <span class="speed-title">休闲</span><span class="speed-desc">~10 次/秒</span>
+          </button>
+          <button data-speed="1" class="speed-btn">
+            <span class="speed-title">快速</span><span class="speed-desc">~25 次/秒</span>
+          </button>
+          <button data-speed="2" class="speed-btn">
+            <span class="speed-title">极速</span><span class="speed-desc">~50 次/秒</span>
+          </button>
+        </div>
+        <div class="hint" id="keyboard-hint" hidden>键盘模式在锁屏情况下不生效，影响桌宠动画</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><span class="section-title">设置</span></div>
+      <div class="list">
+        <div class="list-row hotkey-row" id="hotkey-row">
+          <div class="row-main">
+            <span class="row-label">全局热键</span>
+            <span class="row-sub">开始 / 暂停刷数</span>
+          </div>
+          <button class="hotkey-badge" id="hotkey-value" type="button" aria-label="设置全局热键" title="点击修改全局热键">F4</button>
+        </div>
+        <div class="list-row">
+          <div class="row-main">
+            <span class="row-label">一键加数</span>
+            <span class="row-sub" id="add-sub">写入本地计数，等待下次同步</span>
+          </div>
+          <div class="add-controls">
+            <input class="add-input" id="add-count" type="number" min="1" max="1000000" step="1" inputmode="numeric" placeholder="请输入数字" aria-label="一键加数数量">
+            <button class="mode-btn" id="add-btn" type="button">刷取</button>
+          </div>
+        </div>
+        <div class="list-row">
+          <div class="row-main">
+            <span class="row-label">自动开箱</span>
+            <span class="row-sub">宝箱就绪后自动领取</span>
+          </div>
+          <button class="switch" id="chest-switch" role="switch" aria-label="自动开箱" aria-checked="false"></button>
+        </div>
+
+        <div class="list-row">
+          <div class="row-main">
+            <span class="row-label">高级开箱</span>
+            <span class="row-sub" id="adv-sub">锁屏 / 隐藏桌宠时也能开箱</span>
+          </div>
+          <button class="switch" id="adv-switch" role="switch" aria-label="高级开箱" aria-checked="false"></button>
+        </div>
+        <div class="list-row">
+          <div class="row-main">
+            <span class="row-label">开机自启</span>
+            <span class="row-sub">任务计划，以最高权限运行</span>
+          </div>
+          <button class="switch" id="autostart-switch" role="switch" aria-label="开机自启" aria-checked="false"></button>
+        </div>
+        <div class="layout-group" id="layout-group">
+          <div class="layout-group-head" id="layout-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="layout-group-body">
+            <div class="row-main">
+              <span class="row-label">位置排列</span>
+              <span class="row-sub" id="arrange-sub">已关闭</span>
+            </div>
+            <div class="layout-head-actions">
+              <span class="layout-chevron" aria-hidden="true"></span>
+            </div>
+          </div>
+          <div class="layout-group-body" id="layout-group-body" hidden>
+            <div class="list-row">
+              <div class="row-main">
+                <span class="row-label">自动排列</span>
+                <span class="row-sub">开启后自动排列好友桌宠</span>
+              </div>
+              <button class="switch" id="arrange-switch" role="switch" aria-label="自动排列" aria-checked="false"></button>
+            </div>
+            <div class="list-row">
+              <div class="row-main">
+                <span class="row-label">排列方式</span>
+                <span class="row-sub" id="layout-mode-sub">保持官方默认位置</span>
+              </div>
+              <div class="mode-group">
+                <button class="mode-btn active" id="layout-horizontal" type="button">横排</button>
+                <button class="mode-btn" id="layout-vertical" type="button">竖排</button>
+              </div>
+            </div>
+            <div class="list-row">
+              <div class="row-main">
+                <span class="row-label">重置排列</span>
+                <span class="row-sub" id="layout-reset-sub">清除当前房间的位置记忆</span>
+              </div>
+              <button class="mode-btn" id="layout-reset" type="button">重置</button>
+            </div>
+            <div class="list-row">
+              <div class="row-main">
+                <span class="row-label">编辑布局</span>
+                <span class="row-sub" id="layout-edit-sub">位置排列 · 快捷键进入编辑</span>
+              </div>
+              <button class="hotkey-badge" id="layout-edit-hotkey" type="button" aria-label="设置编辑布局快捷键" title="点击修改编辑布局快捷键">F5</button>
+            </div>
+            <div class="list-row">
+              <div class="row-main">
+                <span class="row-label">保存布局</span>
+                <span class="row-sub">位置排列 · 快捷键保存并退出</span>
+              </div>
+              <button class="hotkey-badge" id="layout-save-hotkey" type="button" aria-label="设置保存布局快捷键" title="点击修改保存布局快捷键">F6</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="confirm-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><span>开启高级开箱？</span></div>
+    <div class="modal-body">
+      <p class="confirm-text">高级开箱会结束并重启一次 WuwaTappo，并注入 autotappo_hook.dll，用于锁屏 / F9 隐藏时领取宝箱。</p>
+      <p class="confirm-text muted">注入失败后会显示失败原因并停止自动重试；关闭再开启可手动重试。可能被杀软拦截。</p>
+      <div class="modal-actions">
+        <button class="ghost small" id="confirm-cancel">取消</button>
+        <button class="primary small" id="confirm-ok">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="ui/app.js"></script>
+</body>
+</html>
