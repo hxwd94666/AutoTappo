@@ -13,7 +13,7 @@ pub struct Cdp {
 }
 
 impl Cdp {
-    pub fn connect() -> Result<Self, String> {
+    fn json_targets() -> Result<Vec<Value>, String> {
         let resp = ureq::get(&format!(
             "http://127.0.0.1:{}/json",
             super::injector::CDP_PORT
@@ -24,19 +24,18 @@ impl Cdp {
         let body = resp
             .into_string()
             .map_err(|e| format!("读取 /json 失败: {e}"))?;
-        let targets: Vec<Value> =
-            serde_json::from_str(&body).map_err(|e| format!("解析 /json 失败: {e}"))?;
-        let page = targets
-            .iter()
-            .find(|t| {
-                t["type"].as_str() == Some("page")
-                    && t["url"]
-                        .as_str()
-                        .map(|u| u.ends_with("#/"))
-                        .unwrap_or(false)
-            })
-            .or_else(|| targets.iter().find(|t| t["type"].as_str() == Some("page")))
-            .ok_or_else(|| "没有 page target".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("解析 /json 失败: {e}"))
+    }
+
+    fn is_main_target(t: &Value) -> bool {
+        t["type"].as_str() == Some("page")
+            && t["url"]
+                .as_str()
+                .map(|u| u.ends_with("#/"))
+                .unwrap_or(false)
+    }
+
+    fn connect_target(page: &Value) -> Result<Self, String> {
         let url = page["webSocketDebuggerUrl"]
             .as_str()
             .ok_or_else(|| "缺少 webSocketDebuggerUrl".to_string())?;
@@ -45,6 +44,42 @@ impl Cdp {
             let _ = s.set_read_timeout(Some(Duration::from_secs(8)));
         }
         Ok(Self { socket, next_id: 1 })
+    }
+
+    pub fn connect() -> Result<Self, String> {
+        let targets = Self::json_targets()?;
+        let page = targets
+            .iter()
+            .find(|t| Self::is_main_target(t))
+            .or_else(|| targets.iter().find(|t| t["type"].as_str() == Some("page")))
+            .ok_or_else(|| "没有 page target".to_string())?;
+        Self::connect_target(page)
+    }
+
+    /// 只连接游戏主页面 #/。高级开箱必须使用该页面，
+    /// 否则会捕获到 panel 等子页面的 openChest，却读不到宝箱 DOM。
+    pub fn connect_main() -> Result<Self, String> {
+        let targets = Self::json_targets()?;
+        let page = targets
+            .iter()
+            .find(|t| Self::is_main_target(t))
+            .ok_or_else(|| "游戏主页面 #/ 尚未就绪".to_string())?;
+        crate::logging::info(
+            "cdp",
+            format!(
+                "连接主页面 target url={} title={}",
+                page["url"].as_str().unwrap_or("?"),
+                page["title"].as_str().unwrap_or("?")
+            ),
+        );
+        Self::connect_target(page)
+    }
+
+    pub fn current_page_url(&mut self) -> Result<String, String> {
+        self.evaluate("location.href", false)?
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "无法读取当前页面 URL".to_string())
     }
 
     fn send_raw(&mut self, method: &str, params: Value) -> Result<u64, String> {
@@ -374,3 +409,25 @@ impl Cdp {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn main_target_only_accepts_root_route() {
+        assert!(Cdp::is_main_target(&json!({
+            "type": "page",
+            "url": "http://tauri.localhost/#/"
+        })));
+        assert!(!Cdp::is_main_target(&json!({
+            "type": "page",
+            "url": "http://tauri.localhost/index.html#/panel"
+        })));
+        assert!(!Cdp::is_main_target(&json!({
+            "type": "page",
+            "url": "http://tauri.localhost/index.html#/login"
+        })));
+    }
+}

@@ -14,6 +14,9 @@
     </div>
     <div class="titlebar-fill"></div>
     <div class="titlebar-actions">
+      <button id="btn-logs" class="win-btn logs" aria-label="打开日志文件夹">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      </button>
       <button id="btn-min" class="win-btn" aria-label="最小化">—</button>
       <button id="btn-close" class="win-btn close" aria-label="关闭">✕</button>
     </div>
@@ -118,12 +121,15 @@
           <div class="layout-group-body" id="layout-group-body" hidden>
             <div class="list-row">
               <div class="row-main">
-                <span class="row-label">自动排列</span>
-                <span class="row-sub">开启后自动排列好友桌宠</span>
+                <span class="row-label">排列模式</span>
+                <span class="row-sub" id="layout-mode-kind-sub">手动：按 F6 进入编辑</span>
               </div>
-              <button class="switch" id="arrange-switch" role="switch" aria-label="自动排列" aria-checked="false"></button>
+              <div class="mode-group">
+                <button class="mode-btn active" id="layout-manual" type="button">手动</button>
+                <button class="mode-btn" id="layout-auto" type="button">自动</button>
+              </div>
             </div>
-            <div class="list-row">
+            <div class="list-row" id="layout-direction-row">
               <div class="row-main">
                 <span class="row-label">排列方式</span>
                 <span class="row-sub" id="layout-mode-sub">新好友排在自己右侧</span>

@@ -23,7 +23,7 @@ pub struct Settings {
     pub hotkey_vk: i32,
     pub layout_edit_hotkey_vk: i32,    pub auto_chest: bool,
     pub advanced: bool,
-    pub auto_arrange: bool,
+    pub layout_manual: bool,
     pub layout_mode: String,
     #[serde(default)]
     pub layout_wrap: u8,
@@ -42,7 +42,7 @@ impl Default for Settings {
             hotkey_vk: DEFAULT_HOTKEY_VK,
             layout_edit_hotkey_vk: 0x75,            auto_chest: false,
             advanced: false,
-            auto_arrange: false,
+            layout_manual: true,
             layout_mode: "h-right".into(),
             layout_wrap: 0,
             layout_wrap_dir: 0,
@@ -104,7 +104,7 @@ impl Settings {
             hotkey_vk: clicker.hotkey_vk.load(Ordering::Relaxed),
             layout_edit_hotkey_vk: crate::features::arrange::edit_hotkey(),            auto_chest: chest.enabled.load(Ordering::Relaxed),
             advanced: advanced_on,
-            auto_arrange: crate::features::arrange::enabled(),
+            layout_manual: crate::features::arrange::layout_manual(),
             layout_mode: crate::features::arrange::layout_mode().to_string(),
             layout_wrap: crate::features::arrange::layout_wrap(),
             layout_wrap_dir: crate::features::arrange::layout_wrap_dir(),
@@ -129,6 +129,7 @@ impl Settings {
             Ordering::SeqCst,
         );
         crate::features::arrange::set_hotkeys(self.layout_edit_hotkey_vk);
+        crate::features::arrange::set_layout_manual(self.layout_manual);
         crate::features::arrange::set_layout_mode(&self.layout_mode);
         crate::features::arrange::set_layout_wrap(self.layout_wrap);
         crate::features::arrange::set_layout_wrap_dir(self.layout_wrap_dir);
@@ -146,7 +147,7 @@ impl Settings {
         advanced.enabled.store(advanced_on, Ordering::SeqCst);
         advanced.lock_screen.store(advanced_on, Ordering::SeqCst);
         advanced.hidden.store(advanced_on, Ordering::SeqCst);
-        crate::features::arrange::set_enabled(self.auto_arrange && advanced_on);
+        crate::features::arrange::set_enabled(advanced_on);
     }
 }
 
@@ -169,7 +170,7 @@ mod tests {
             hotkey_vk: 0x76,
             layout_edit_hotkey_vk: 0x75,            auto_chest: true,
             advanced: true,
-            auto_arrange: false,
+            layout_manual: true,
             layout_mode: "h-right".into(),
             layout_wrap: 0,
             layout_wrap_dir: 0,
@@ -186,7 +187,12 @@ mod tests {
         let silent = SilentController::new();
         let clicker = ClickerController::new(Arc::clone(&silent.running));
         let chest = ChestController::new();
-        let advanced = AdvancedController::new(Arc::clone(&chest.enabled));
+        let (left_cooldown, right_cooldown) = chest.cooldown_handles();
+        let advanced = AdvancedController::new(
+            Arc::clone(&chest.enabled),
+            left_cooldown,
+            right_cooldown,
+        );
         let s = Settings {
             mode: 0,
             running: true,
@@ -194,7 +200,7 @@ mod tests {
             hotkey_vk: 0x76,
             layout_edit_hotkey_vk: 0x75,            auto_chest: true,
             advanced: true,
-            auto_arrange: false,
+            layout_manual: true,
             layout_mode: "h-right".into(),
             layout_wrap: 0,
             layout_wrap_dir: 0,

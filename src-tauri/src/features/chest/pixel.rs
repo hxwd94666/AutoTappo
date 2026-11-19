@@ -90,32 +90,12 @@ fn debug_on() -> bool {
     on
 }
 
-/// 诊断日志文件路径：`%TEMP%\autotappo-chest-debug.log`
-/// （本程序是 GUI 子系统，没有控制台，stderr 看不到，只能落盘）
-fn debug_log_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("autotappo-chest-debug.log")
-}
-
-/// 写一行诊断日志；未开启诊断或写入失败时静默忽略（绝不影响主流程）
+/// 写一行诊断日志；只有显式开启 AUTOTAPPO_CHEST_DEBUG 时才写入统一日志。
 pub(super) fn debug_log(args: std::fmt::Arguments) {
     if !debug_on() {
         return;
     }
-    use std::io::Write;
-    let path = debug_log_path();
-    // 超过 1 MB 就清空重来，避免长时间常驻把磁盘写满
-    if let Ok(md) = std::fs::metadata(&path) {
-        if md.len() > 1_048_576 {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(f, "{}", args);
-    }
+    crate::logging::debug("chest", args.to_string());
 }
 
 /// 用「按钮框之外」的一圈像素估计壁纸底色（逐通道中位数，抗局部噪声）

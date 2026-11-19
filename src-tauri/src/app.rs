@@ -18,6 +18,7 @@ use crate::state::{AppState, Inner};
 pub fn run(autostart_launch: bool) {
     let app = tauri::Builder::default()
         .setup(move |app| {
+            crate::logging::info("app", "Tauri setup 开始");
             // 静默控制器先创建，把同一个 running 原子量交给键盘热键监听，
             // 这样 F4 和面板/托盘切换的是同一个开关。
             let silent = Arc::new(SilentController::new());
@@ -30,12 +31,27 @@ pub fn run(autostart_launch: bool) {
             chest.start_worker();
 
             // 高级开箱：依赖自动开箱
-            let advanced = Arc::new(AdvancedController::new(Arc::clone(&chest.enabled)));
+            let (left_cooldown, right_cooldown) = chest.cooldown_handles();
+            let advanced = Arc::new(AdvancedController::new(
+                Arc::clone(&chest.enabled),
+                left_cooldown,
+                right_cooldown,
+            ));
             advanced.start_worker();
             arrange::start_worker();
 
             // 恢复上次配置（手动启动和开机自启都走同一套）。
             let initial_settings = settings::Settings::load();
+            crate::logging::info(
+                "app",
+                format!(
+                    "加载设置 advanced={} auto_chest={} layout_manual={} mode={}",
+                    initial_settings.advanced,
+                    initial_settings.auto_chest,
+                    initial_settings.layout_manual,
+                    initial_settings.layout_mode
+                ),
+            );
             initial_settings.apply(&clicker, &silent, &chest, &advanced);
 
             let inner = Arc::new(Inner {
@@ -79,6 +95,7 @@ pub fn run(autostart_launch: bool) {
                     inner.tray_ok.store(true, Ordering::SeqCst);
                 }
                 Err(e) => {
+                    crate::logging::error("app", format!("托盘图标创建失败: {e}"));
                     eprintln!("[AutoTappo] 托盘图标创建失败: {e}");
                 }
             }
@@ -88,7 +105,10 @@ pub fn run(autostart_launch: bool) {
 
             // 开机自启时只驻留托盘，不创建面板窗口。
             if !autostart_launch {
-                let _ = window::ensure(app.handle());
+                match window::ensure(app.handle()) {
+                    Ok(()) => crate::logging::info("app", "主窗口已创建"),
+                    Err(e) => crate::logging::error("app", format!("主窗口创建失败: {e}")),
+                }
             }
 
             Ok(())
@@ -120,8 +140,8 @@ pub fn run(autostart_launch: bool) {
             commands::chest::get_advanced_status,
             commands::chest::set_advanced_enabled,
             commands::layout::get_layout_edit,
-            commands::layout::get_auto_arrange,
-            commands::layout::set_auto_arrange,
+            commands::layout::get_layout_manual,
+            commands::layout::set_layout_manual,
             commands::layout::get_layout_mode,
             commands::layout::set_layout_mode,
             commands::layout::get_layout_wrap,
@@ -130,6 +150,8 @@ pub fn run(autostart_launch: bool) {
             commands::layout::set_layout_wrap_dir,
             commands::layout::get_layout_edit_hotkey,
             commands::layout::set_layout_edit_hotkey,
+            commands::logs::open_log_dir,
+            commands::logs::get_log_dir,
             commands::chest::set_advanced_flags,
             commands::autostart::get_autostart,
             commands::autostart::set_autostart,

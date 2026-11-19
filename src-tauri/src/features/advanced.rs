@@ -9,13 +9,14 @@
 //! 不开启时 AutoTappo 不会注入、不会重启桌宠，正常用户完全无感。
 
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::features::cdp::Cdp;
 use crate::features::injector;
+use crate::logging;
 use crate::{features::chest, platform::session};
 
 #[derive(Clone, Serialize)]
@@ -51,10 +52,16 @@ pub struct AdvancedController {
     pub shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<AdvancedSnapshot>>,
     chest_enabled: Arc<AtomicBool>,
+    left_cooldown: Arc<AtomicU64>,
+    right_cooldown: Arc<AtomicU64>,
 }
 
 impl AdvancedController {
-    pub fn new(chest_enabled: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        chest_enabled: Arc<AtomicBool>,
+        left_cooldown: Arc<AtomicU64>,
+        right_cooldown: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             enabled: Arc::new(AtomicBool::new(false)),
             lock_screen: Arc::new(AtomicBool::new(false)),
@@ -62,6 +69,8 @@ impl AdvancedController {
             shutdown: Arc::new(AtomicBool::new(false)),
             status: Arc::new(Mutex::new(AdvancedSnapshot::default())),
             chest_enabled,
+            left_cooldown,
+            right_cooldown,
         }
     }
 
@@ -80,15 +89,19 @@ impl AdvancedController {
         let shutdown = Arc::clone(&self.shutdown);
         let status = Arc::clone(&self.status);
         let chest_enabled = Arc::clone(&self.chest_enabled);
+        let left_cooldown = Arc::clone(&self.left_cooldown);
+        let right_cooldown = Arc::clone(&self.right_cooldown);
 
         thread::spawn(move || {
             let mut cdp: Option<Cdp> = None;
             let mut next_try = Instant::now();
+            let mut next_target_check = Instant::now();
             let mut left_next: u64 = 0;
             let mut right_next: u64 = 0;
             // 每次开启只允许尝试一次注入/重启，失败后不再自动杀桌宠。
             let mut restart_attempted = false;
             let mut capture_failures = 0u32;
+            let mut last_wait_signature = String::new();
 
             while !shutdown.load(Ordering::Relaxed) {
                 if !enabled.load(Ordering::Relaxed) {
@@ -134,7 +147,9 @@ impl AdvancedController {
                     }
                     restart_attempted = true;
                     set_status(&status, "starting", "正在重启桌宠并注入 DLL…", false, false);
+                    logging::info("advanced", "开始重启桌宠并注入 DLL");
                     if let Err(e) = injector::ensure_cdp_pet() {
+                        logging::error("advanced", format!("注入/重启失败: {e}"));
                         set_status(&status, "error", &format!("高级开箱失败：{e}"), false, false);
                         thread::sleep(Duration::from_secs(2));
                         continue;
@@ -146,28 +161,67 @@ impl AdvancedController {
 
                 // 2. 连接
                 if cdp.is_none() {
-                    match Cdp::connect() {
-                        Ok(c) => cdp = Some(c),
+                    match Cdp::connect_main() {
+                        Ok(c) => {
+                            cdp = Some(c);
+                            next_target_check = Instant::now() + Duration::from_secs(5);
+                        }
                         Err(e) => {
+                            logging::warn("advanced", format!("连接主页面失败: {e}"));
                             set_status(
                                 &status,
-                                "error",
-                                &format!("CDP 连接失败：{e}"),
+                                "waiting",
+                                &format!("等待游戏主页面 #/：{e}"),
                                 false,
                                 false,
                             );
-                            next_try = Instant::now() + Duration::from_secs(10);
+                            next_try = Instant::now() + Duration::from_secs(3);
                             continue;
                         }
                     }
                 }
                 let Some(client) = cdp.as_mut() else { continue };
 
+                // 页面可能从 #/ 切到 panel 等子页面；旧连接会捕获错误页面的
+                // openChest，导致宝箱 DOM 始终不可见。定期校验并回到 #/。
+                if Instant::now() >= next_target_check {
+                    next_target_check = Instant::now() + Duration::from_secs(5);
+                    match client.current_page_url() {
+                        Ok(url) if url.ends_with("#/") => {}
+                        Ok(url) => {
+                            logging::warn("advanced", format!("CDP 目标页面不是 #/，准备重连: {url}"));
+                            cdp = None;
+                            set_status(
+                                &status,
+                                "starting",
+                                "CDP 页面已切换，正在重连游戏主页面…",
+                                false,
+                                false,
+                            );
+                            next_try = Instant::now() + Duration::from_secs(2);
+                            continue;
+                        }
+                        Err(e) => {
+                            cdp = None;
+                            set_status(
+                                &status,
+                                "starting",
+                                &format!("CDP 页面检查失败，正在重连：{e}"),
+                                false,
+                                false,
+                            );
+                            next_try = Instant::now() + Duration::from_secs(3);
+                            continue;
+                        }
+                    }
+                }
+
                 // 3. 读状态
                 let state = match client.read_state() {
                     Ok(v) => v,
                     Err(e) => {
                         cdp = None;
+                        logging::error("advanced", format!("read_state 失败: {e}"));
                         set_status(
                             &status,
                             "error",
@@ -186,6 +240,10 @@ impl AdvancedController {
                 if !chest_fn {
                     if let Err(e) = client.capture_open_chest() {
                         capture_failures = capture_failures.saturating_add(1);
+                        logging::warn(
+                            "advanced",
+                            format!("捕获 openChest 失败({capture_failures}/3): {e}"),
+                        );
                         if capture_failures < 3 {
                             set_status(
                                 &status,
@@ -208,6 +266,7 @@ impl AdvancedController {
                         continue;
                     }
                     capture_failures = 0;
+                    logging::info("advanced", "捕获 openChest 成功");
                 }
 
                 set_status(&status, "ready", "CDP 已就绪", true, true);
@@ -218,10 +277,25 @@ impl AdvancedController {
                 let should_claim = (lock_screen.load(Ordering::Relaxed) && locked)
                     || (hidden.load(Ordering::Relaxed) && pet_hidden);
                 if !should_claim {
+                    let signature = format!(
+                        "locked={} pet_hidden={} lock_enabled={} hidden_enabled={}",
+                        locked,
+                        pet_hidden,
+                        lock_screen.load(Ordering::Relaxed),
+                        hidden.load(Ordering::Relaxed)
+                    );
+                    if last_wait_signature != signature {
+                        logging::info(
+                            "advanced",
+                            format!("等待锁屏/隐藏条件 {signature}"),
+                        );
+                        last_wait_signature = signature;
+                    }
                     set_status(&status, "waiting", "等待锁屏/隐藏条件", true, true);
                     next_try = Instant::now() + Duration::from_secs(3);
                     continue;
                 }
+                last_wait_signature.clear();
 
                 // 7. 判断左右宝箱
                 let now_ms = state["now"].as_u64().unwrap_or(0);
@@ -268,6 +342,10 @@ impl AdvancedController {
                 }
 
                 // 8. 调官方 openChest；click_num 在页面内取调用瞬间的 cumulativeClickCount。
+                logging::info(
+                    "advanced",
+                    format!("调用 openChest place={place} cumulative={cumulative} available={available}"),
+                );
                 match client.open_chest(place) {
                     Ok(v) if v["ok"].as_bool() == Some(true) => {
                         let data = &v["result"]["data"];
@@ -286,16 +364,27 @@ impl AdvancedController {
                         } else if place == "right" {
                             right_next = fallback_next;
                         }
+                        if left_next > now_ms {
+                            left_cooldown.fetch_max(left_next, Ordering::Relaxed);
+                        }
+                        if right_next > now_ms {
+                            right_cooldown.fetch_max(right_next, Ordering::Relaxed);
+                        }
                         let msg = format!(
                             "已开启{}宝箱，消耗 {} 点击",
                             if place == "left" { "左侧" } else { "右侧" },
                             data["click_consume"].as_u64().unwrap_or(0)
+                        );
+                        logging::info(
+                            "advanced",
+                            format!("openChest 成功 place={place} left_next={left_next} right_next={right_next}"),
                         );
                         set_status(&status, "opened", &msg, true, true);
                         next_try = Instant::now() + Duration::from_secs(15);
                     }
                     Ok(v) => {
                         let err = v["err"].as_str().unwrap_or("官方返回失败").to_string();
+                        logging::warn("advanced", format!("openChest 返回失败 place={place} err={err}"));
                         set_status(
                             &status,
                             "waiting",
@@ -310,6 +399,7 @@ impl AdvancedController {
                     }
                     Err(e) => {
                         cdp = None;
+                        logging::error("advanced", format!("openChest 调用异常 place={place} err={e}"));
                         set_status(
                             &status,
                             "error",
@@ -350,11 +440,23 @@ fn set_status(
     cdp: bool,
     chest_fn: bool,
 ) {
+    let mut changed = false;
     if let Ok(mut s) = status.lock() {
+        changed = s.state != state || s.detail != detail;
         s.state = state.to_string();
         s.detail = detail.to_string();
         s.cdp = cdp;
         s.chest_fn = chest_fn;
+    }
+    // ready/waiting 会在每个轮询周期切换，不能写日志；只记录错误、开箱成功、
+    // 正在启动/捕获等有意义的状态变化。
+    if changed && state != "ready" && state != "waiting" {
+        let message = format!("state={state} detail={detail} cdp={cdp} chest_fn={chest_fn}");
+        if state == "error" {
+            logging::error("advanced", message);
+        } else {
+            logging::info("advanced", message);
+        }
     }
 }
 

@@ -29,7 +29,9 @@ AutoTappo 是 [To0Ru/AutoTappo](https://github.com/To0Ru/AutoTappo) 的独立延
     │   ├── runtime.rs          启停、速度、热键、模式、一键加数
     │   ├── chest.rs            自动开箱、高级开箱
     │   ├── layout.rs           位置排列
+    │   ├── logs.rs             打开日志目录
     │   └── autostart.rs        开机自启
+    ├── logging.rs             按天写运行日志
     ├── config/
     │   └── settings.rs         settings.json 读写
     ├── platform/
@@ -117,10 +119,12 @@ app.rs 的 setup 顺序：
 ### 数据格式
 
 - settings.json 路径：%APPDATA%\AutoTappo\settings.json
-- 位置排列 key：autotappo-room-layout-v8:<account>:<room>
-- 位置存档版本：v8，仅存模式槽位、锚点和换行数量，不绑定好友 ID
-- 基础好友槽位：19 个；槽位满后追加溢出槽
-- 排列模式：h-left / h-right / v-up / v-down / overlap
+- 日志目录：%LOCALAPPDATA%\AutoTappo\logs，按天保存 14 天
+- 手动存档 key：autotappo-room-manual-v9:<account>:<room>
+- 手动存档版本：v9，仅存房间槽位，不绑定好友 ID
+- 自动配置全局：layout_manual / layout_mode / layout_wrap / layout_wrap_dir
+- 好友槽位：19 个，自动不追加
+- 排列模式：手动 / 自动；自动方向 h-left / h-right / v-up / v-down / overlap
 - 一键加数范围：1..=1_000_000
 
 ### 运行行为
@@ -192,15 +196,13 @@ arrange.rs + web/injected：
 - CDP 注入 room-layout-core.js 和 room-layout.js；
 - 只修改官方 vnode / 位置缓存，不移动真实鼠标；
 - 保存完整壳和可见矩形；
-- 横左/横右/竖上/竖下使用 v8 槽位：自己为锚点，19 个基础好友槽，满后追加；
-- 槽位不绑定好友 ID，新好友填最低空槽，离开时最高占用槽补位；
-- 每行/列数量包含自己；0 或空为到顶换行；
-- 换行方向：横排可选向上/向下，竖排可选向左/向右；
-- 新好友使用同行/列现有好友的平均间距；
-- 自己拖动不带动槽位；切模式时按当前自己位置平移槽位；
-- 手动布局单键：第一次进入编辑，第二次保存；保存时更新好友当前占用槽位；
-- 位置排列默认收起，不记忆展开状态；重置排列已移除；
-- 重叠模式把所有好友猫放在自己壳位置、z-index 5，跟随自己拖动，不写入槽位；
+- 自动固定 19 个好友槽；配置全局，不保存自动槽位；新好友填最低空槽，离开最小补位；
+- 手动按房间保存槽位；手动档为空不做任何操作；空槽保留，新好友填最小空槽；
+- 手动没有空槽时新好友保持官方默认；F6 保存才创建新槽；
+- 手动槽位按距自己的距离编号，重排只改编号不改坐标；
+- 自动 F6 禁用；手动 F6 单键编辑/保存；
+- 位置排列默认收起；自动不追加第 20 个好友槽；
+- 重叠只属于自动模式，手动不支持；
 - 新成员/返回成员有短暂隐藏保护；
 - 观察器改动风险较高，修改后必须实测新进、离线返回、F6 手动布局、横竖/重叠切换；
 - 默认单实例，避免两个 worker 互相覆盖模式。
@@ -213,6 +215,17 @@ web/ui/app.js：
 - 负责状态轮询、设置、热键录制、位置排列 UI、一键加数；
 - 不得引用 web/injected 脚本；
 - 所有 Tauri command 名称必须与后端 handler 一致。
+
+### 6.6 日志
+
+logging.rs：
+
+- 日志目录 `%LOCALAPPDATA%\AutoTappo\logs`；
+- 按天写入 `autotappo-YYYY-MM-DD.log`，保留 14 天；
+- 记录应用启动、设置、注入、CDP 目标、捕获、隐藏/锁屏和 openChest 结果；
+- 不记录账号、房间号、昵称等隐私信息；
+- 标题栏日志按钮通过 `open_log_dir` 打开目录；
+- 写入失败不得影响主流程。
 
 ---
 
@@ -234,8 +247,8 @@ web/ui/app.js：
     get_advanced_status
     set_advanced_enabled
     set_advanced_flags
-    get_auto_arrange
-    set_auto_arrange
+    get_layout_manual
+    set_layout_manual
     get_layout_mode
     set_layout_mode
     get_layout_wrap
@@ -245,6 +258,8 @@ web/ui/app.js：
     get_layout_edit
     get_layout_edit_hotkey
     set_layout_edit_hotkey
+    open_log_dir
+    get_log_dir
     get_autostart
     set_autostart
 
@@ -282,7 +297,7 @@ Web：
 
 验收：
 
-- 35 个 Rust 测试；
+- 37 个 Rust 测试；
 - 21 个 Node 布局测试；
 - 命令名完全对应；
 - 冷启动窗口正常；

@@ -2,7 +2,7 @@
 // 由 AutoTappo 的 arrange worker 通过 CDP 注入；几何/存储核心由 room-layout-core.js 提供。
 (() => {
   'use strict';
-  const VERSION = '12';
+  const VERSION = '16';
   if (window.__autotappoArrange) {
     if (window.__autotappoArrange.version === VERSION) {
       try { window.__autotappoArrange.setEnabled(true); } catch (e) {}
@@ -17,6 +17,7 @@
 
   const GAP = CORE.GAP;
   const SLOT_PREFIX = 'autotappo-room-layout-v8:';
+  const MANUAL_PREFIX = 'autotappo-room-manual-v9:';
   const SLOT_COUNT = 19;
   const DIRECTIONS = ['h-left', 'h-right', 'v-up', 'v-down'];
   const state = {
@@ -33,6 +34,9 @@
       : (window.__autotappoLayoutMode === 'overlap' ? 'overlap' : 'h-right'),
     wrap: Math.max(0, Math.min(20, Number(window.__autotappoLayoutWrap) || 0)),
     wrapDir: Number(window.__autotappoLayoutWrapDir) === 1 ? 1 : 0,
+    manualMode: window.__autotappoLayoutManual !== false,
+    manualKey: '',
+    manualSlots: [],
     rosterIds: new Set(),
     alignMode: false,
     rebuildSlots: true,
@@ -90,11 +94,109 @@
     } catch (e) {}
     return emptyProfiles();
   }
-  function saveProfiles() {
-    if (!state.key) return;
-    try { localStorage.setItem(state.key, JSON.stringify(state.profiles)); } catch (e) {}
-  }
 
+  function manualKeyOf(id) {
+    return MANUAL_PREFIX + id.account + ':' + id.room;
+  }
+  function loadManual() {
+    const id = identity();
+    const key = manualKeyOf(id);
+    if (state.manualKey !== key) {
+      state.manualKey = key;
+      state.manualSlots = [];
+      try {
+        const raw = JSON.parse(localStorage.getItem(key) || 'null');
+        if (raw && raw.version === 9 && Array.isArray(raw.slots)) {
+          state.manualSlots = raw.slots.filter((s) => s && Number.isFinite(Number(s.x)) && Number.isFinite(Number(s.y)))
+            .map((s) => ({ x: Number(s.x), y: Number(s.y), w: Number(s.w) || 100, h: Number(s.h) || 106 }));
+        }
+      } catch (e) {}
+    }
+    return state.manualSlots;
+  }
+  function saveManual() {
+    if (!state.manualKey) return;
+    try { localStorage.setItem(state.manualKey, JSON.stringify({ version: 9, slots: state.manualSlots })); } catch (e) {}
+  }
+  function manualCenter(slot) {
+    return { x: slot.x + (slot.w || 0) / 2, y: slot.y + (slot.h || 0) / 2 };
+  }
+  function reindexManual(own) {
+    if (!own || !state.manualSlots.length) return;
+    const owner = new Map();
+    for (const [id, idx] of state.assignments) owner.set(idx, id);
+    const oc = manualCenter({ x: own.visible.x, y: own.visible.y, w: own.visible.w, h: own.visible.h });
+    const records = state.manualSlots.map((slot, i) => ({ slot, id: owner.get(i) || null, c: manualCenter(slot) }));
+    records.sort((a, b) => {
+      const da = (a.c.x - oc.x) ** 2 + (a.c.y - oc.y) ** 2;
+      const db = (b.c.x - oc.x) ** 2 + (b.c.y - oc.y) ** 2;
+      if (Math.abs(da - db) > 0.5) return da - db;
+      if (Math.abs(a.slot.y - b.slot.y) > 0.5) return a.slot.y - b.slot.y;
+      return a.slot.x - b.slot.x;
+    });
+    state.manualSlots = records.map((r) => r.slot);
+    state.assignments = new Map();
+    records.forEach((r, i) => { if (r.id) state.assignments.set(r.id, i); });
+  }
+  function syncManual(list) {
+    const online = new Set(list.map((c) => c.id));
+    for (const id of [...state.assignments.keys()]) if (!online.has(id)) state.assignments.delete(id);
+    const used = new Set(state.assignments.values());
+    for (const c of list) {
+      if (state.assignments.has(c.id)) continue;
+      let idx = -1;
+      for (let i = 0; i < state.manualSlots.length; i++) if (!used.has(i)) { idx = i; break; }
+      if (idx < 0) continue;
+      state.assignments.set(c.id, idx);
+      used.add(idx);
+    }
+  }
+  function applyManual() {
+    if (!state.enabled || state.edit) return;
+    const idx = findIndex();
+    if (!idx) return;
+    const own = ownRects();
+    const list = cats();
+    if (!own || !list.length) return;
+    const slots = loadManual();
+    if (!slots.length) return;
+    if (state.official) restoreOfficial();
+    syncManual(list);
+    if (!state.assignments.size) return;
+    reindexManual(own);
+    state.lastIds = list.map((c) => c.id).join(',');
+    for (const c of list) settledIds.add(c.id);
+    const placed = [];
+    for (const c of list) {
+      const si = state.assignments.get(c.id);
+      const slot = si == null ? null : state.manualSlots[si];
+      if (!slot) continue;
+      placed.push({ c, shell: { x: slot.x, y: slot.y, w: c.shell.w, h: c.shell.h } });
+    }
+    if (!placed.length) return;
+    if (applyOfficial(placed)) return;
+    state.official = false;
+    const next = new Map();
+    for (const item of placed) {
+      next.set(item.c.id, {
+        left: item.c.left + (item.shell.x - item.c.shell.x),
+        top: item.c.top + (item.shell.y - item.c.shell.y)
+      });
+    }
+    state.overrides = next;
+    if (state.idx !== idx) {
+      if (state.orig && state.idx) { try { state.idx.render = state.orig; } catch (e) {} }
+      state.idx = idx;
+      state.orig = idx.render;
+    }
+    if (!state.orig) return;
+    idx.render = function (...args) {
+      const vnode = state.orig.apply(this, args);
+      patchVNode(vnode);
+      return vnode;
+    };
+    idx.update();
+  }
   function viewport() {
     return {
       width: Math.max(1, window.innerWidth),
@@ -262,21 +364,6 @@
     if (!gaps.length) return CORE.GAP;
     const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
     return Math.max(CORE.GAP, Math.min(200, avg));
-  }
-  function refreshEmptyLineSlots(profile, start, fresh, mode) {
-    const base = profile.slots[start];
-    if (!base) return;
-    const assigned = new Set(state.assignments.values());
-    const horizontal = mode === 'h-left' || mode === 'h-right';
-    for (let i = start + 1; i < profile.slots.length; i++) {
-      if (assigned.has(i)) continue;
-      const slot = profile.slots[i];
-      const sameLine = horizontal
-        ? Math.abs(slot.y - base.y) <= 10
-        : Math.abs(slot.x - base.x) <= 10;
-      if (!sameLine) continue;
-      if (fresh.slots[i]) profile.slots[i] = fresh.slots[i];
-    }
   }
   function buildProfile(mode, own, list, wrap, count, gap) {
     const sample = sampleCat(list);
@@ -447,11 +534,16 @@
 
 
   function applyCurrent() {
-    if (state.layoutMode === 'overlap') applyOverlap();
+    if (state.manualMode) applyManual();
+    else if (state.layoutMode === 'overlap') applyOverlap();
     else apply();
   }
 
   function apply() {
+    if (state.manualMode) {
+      applyManual();
+      return;
+    }
     if (state.layoutMode === 'overlap') {
       applyOverlap();
       return;
@@ -478,7 +570,7 @@
     const mode = DIRECTIONS.includes(state.layoutMode) ? state.layoutMode : 'h-right';
     let profile = ensureProfile(mode, own, list);
     if (!profile || !profile.slots.length) return;
-    if (state.rebuildSlots && !profile.manual) {
+    if (state.rebuildSlots) {
       profile = buildProfile(mode, own, list, state.wrap, SLOT_COUNT, averageGap(list, mode));
       state.profiles.modes[mode] = profile;
       state.alignMode = false;
@@ -489,24 +581,20 @@
     state.rebuildSlots = false;
     const priorIds = state.rosterIds;
     const joined = list.filter((c) => !priorIds.has(c.id));
+    const oldSlotCount = profile.slots.length;
     reconcileAssignments(list, profile, mode, own);
     if (priorIds.size && joined.length) {
       const oldList = list.filter((c) => priorIds.has(c.id));
       const gap = averageGap(oldList, mode);
       for (const c of joined) {
         const slotIndex = state.assignments.get(c.id);
-        if (slotIndex == null) continue;
-        const full = buildProfile(mode, own, list, state.wrap, Math.max(profile.slots.length, slotIndex + 1), gap);
+        if (slotIndex == null || slotIndex < oldSlotCount) continue;
+        const full = buildProfile(mode, own, list, state.wrap, slotIndex + 1, gap);
         const next = full && full.slots[slotIndex];
-        if (!next) continue;
-        if (profile.slots[slotIndex]) profile.slots[slotIndex] = next;
-        else profile.slots.push(next);
-        refreshEmptyLineSlots(profile, slotIndex, full, mode);
-        refreshEmptyLineSlots(profile, slotIndex, full, mode);
+        if (next) profile.slots[slotIndex] = next;
       }
     }
     state.rosterIds = new Set(list.map((c) => c.id));
-    saveProfiles();
     state.lastIds = list.map((c) => c.id).join(',');
     for (const c of list) settledIds.add(c.id);
     const placed = [];
@@ -553,6 +641,10 @@
     const id = identity();
     const k = slotKeyOf(id);
     const ids = cats().map((c) => c.id).join(',');
+    if (state.manualMode) {
+      if (k !== state.key || ids !== state.lastIds) applyManual();
+      return;
+    }
     if (state.layoutMode === 'overlap') {
       if (k !== state.key || ids !== state.lastIds || !state.overlapRaf) applyOverlap();
       return;
@@ -584,12 +676,7 @@
   }
   function setEdit(on) {
     if (!state.enabled) return;
-    if (state.layoutMode === 'overlap') {
-      const wasEditing = state.edit;
-      state.edit = false;
-      if (wasEditing) applyOverlap();
-      return;
-    }
+    if (!state.manualMode) return;
     if (state.edit === !!on) return;
     state.edit = !!on;
     if (state.edit) {
@@ -600,25 +687,29 @@
     const own = ownRects();
     const list = cats();
     if (own && list.length) {
-      const mode = DIRECTIONS.includes(state.layoutMode) ? state.layoutMode : 'h-right';
-      const profile = ensureProfile(mode, own, list);
-      if (profile) {
-        reconcileAssignments(list, profile, mode, own);
-        for (const c of list) {
-          const slotIndex = state.assignments.get(c.id);
-          if (slotIndex == null || !profile.slots[slotIndex]) continue;
-          profile.slots[slotIndex] = { x: c.shell.x, y: c.shell.y };
+      const slots = state.manualSlots.slice();
+      const used = new Set(state.assignments.values());
+      for (const c of list) {
+        let slotIndex = state.assignments.get(c.id);
+        if (slotIndex == null) {
+          for (let i = 0; i < slots.length; i++) if (!used.has(i)) { slotIndex = i; break; }
+          if (slotIndex == null && slots.length < SLOT_COUNT) {
+            slotIndex = slots.length;
+            slots.push({ x: c.shell.x, y: c.shell.y, w: c.shell.w, h: c.shell.h });
+          }
+          if (slotIndex == null) continue;
+          state.assignments.set(c.id, slotIndex);
+          used.add(slotIndex);
         }
-        profile.anchor = { x: own.shell.x, y: own.shell.y };
-        profile.wrap = state.wrap;
-        profile.wrapDir = state.wrapDir;
-        profile.manual = true;
-        saveProfiles();
+        if (slots[slotIndex]) slots[slotIndex] = { x: c.shell.x, y: c.shell.y, w: c.shell.w, h: c.shell.h };
       }
+      state.manualSlots = slots;
+      reindexManual(own);
+      saveManual();
     }
     state.overrides.clear();
     state.lastIds = '';
-    applyCurrent();
+    applyManual();
   }
   function setMode(mode) {
     const next = DIRECTIONS.includes(mode) ? mode : (mode === 'overlap' ? 'overlap' : 'h-right');
@@ -650,6 +741,22 @@
     }
     return wrap;
   }
+  function setManual(value) {
+    const manual = !!value;
+    if (state.manualMode === manual) return manual;
+    state.manualMode = manual;
+    state.edit = false;
+    state.lastIds = '';
+    if (manual) {
+      loadManual();
+      applyManual();
+    } else {
+      state.rebuildSlots = true;
+      applyCurrent();
+    }
+    return manual;
+  }
+
   function setWrapDir(value) {
     const dir = Number(value) === 1 ? 1 : 0;
     if (state.wrapDir === dir) return dir;
@@ -800,6 +907,7 @@
     setEnabled,
     setEdit,
     setMode,
+    setManual,
     setWrap,
     setWrapDir,
     refresh,

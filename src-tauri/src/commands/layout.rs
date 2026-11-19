@@ -1,20 +1,12 @@
-use tauri::State;
-
-use crate::state::AppState;
-
 #[tauri::command]
-pub fn get_auto_arrange() -> bool {
-    crate::features::arrange::enabled()
+pub fn get_layout_manual() -> bool {
+    crate::features::arrange::layout_manual()
 }
 
 #[tauri::command]
-pub fn set_auto_arrange(state: State<'_, AppState>, enabled: bool) -> bool {
-    use std::sync::atomic::Ordering;
-    if enabled && !state.0.advanced.enabled.load(Ordering::SeqCst) {
-        return false;
-    }
-    crate::features::arrange::set_enabled(enabled);
-    enabled
+pub fn set_layout_manual(manual: bool) -> bool {
+    crate::features::arrange::set_layout_manual(manual);
+    crate::features::arrange::layout_manual()
 }
 
 #[tauri::command]

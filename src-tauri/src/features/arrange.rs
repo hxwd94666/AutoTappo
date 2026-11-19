@@ -17,16 +17,24 @@ const SCRIPT: &str = include_str!("../../../web/injected/room-layout.js");
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static EDIT: AtomicBool = AtomicBool::new(false);
 static EDIT_HOTKEY: AtomicI32 = AtomicI32::new(0x75);
+static LAYOUT_MANUAL: AtomicBool = AtomicBool::new(true);
 static LAYOUT_MODE: AtomicU8 = AtomicU8::new(0);
 static LAYOUT_WRAP: AtomicU8 = AtomicU8::new(0);
 static LAYOUT_WRAP_DIR: AtomicU8 = AtomicU8::new(0);
 
-pub fn enabled() -> bool {
-    ENABLED.load(Ordering::SeqCst)
-}
-
 pub fn edit() -> bool {
     EDIT.load(Ordering::SeqCst)
+}
+
+pub fn layout_manual() -> bool {
+    LAYOUT_MANUAL.load(Ordering::SeqCst)
+}
+
+pub fn set_layout_manual(value: bool) {
+    LAYOUT_MANUAL.store(value, Ordering::SeqCst);
+    if !value {
+        EDIT.store(false, Ordering::SeqCst);
+    }
 }
 
 pub fn layout_mode() -> &'static str {
@@ -120,6 +128,7 @@ pub fn start_worker() {
                             _ => "window.__autotappoLayoutMode = 'h-right'",
                         },
                     );
+                    eval(&mut cdp, &format!("window.__autotappoLayoutManual = {}", if layout_manual() { "true" } else { "false" }));
                     let wrap = layout_wrap();
                     let wrap_dir = layout_wrap_dir();
                     eval(&mut cdp, &format!("window.__autotappoLayoutWrap = {wrap}"));
@@ -127,6 +136,7 @@ pub fn start_worker() {
                     eval(&mut cdp, SCRIPT);
                     eval(&mut cdp, &format!("window.__autotappoArrange && window.__autotappoArrange.setWrap && window.__autotappoArrange.setWrap({wrap})"));
                     eval(&mut cdp, &format!("window.__autotappoArrange && window.__autotappoArrange.setWrapDir && window.__autotappoArrange.setWrapDir({wrap_dir})"));
+                    eval(&mut cdp, &format!("window.__autotappoArrange && window.__autotappoArrange.setManual && window.__autotappoArrange.setManual({})", if layout_manual() { "true" } else { "false" }));
                     eval(&mut cdp, "window.__autotappoArrange && window.__autotappoArrange.setEnabled(true)");
                     let has_room_api = cdp
                         .evaluate("!!window.__autotappoRoomApi", false)
@@ -179,7 +189,7 @@ fn hotkey_worker() {
     loop {
         let edit_pressed = unsafe { (GetAsyncKeyState(edit_hotkey()) as u16) & 0x8000 != 0 };
         if ENABLED.load(Ordering::SeqCst) && edit_pressed && !edit_down {
-            if layout_mode() == "overlap" {
+            if !layout_manual() || layout_mode() == "overlap" {
                 EDIT.store(false, Ordering::SeqCst);
             } else {
                 let next = !EDIT.load(Ordering::SeqCst);

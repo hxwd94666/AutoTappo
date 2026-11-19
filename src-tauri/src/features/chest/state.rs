@@ -49,6 +49,10 @@ pub struct ChestController {
     pub snapshot: Arc<Mutex<ChestSnapshot>>,
     pub opens_ok: Arc<AtomicU64>,
     pub opens_failed: Arc<AtomicU64>,
+    /// 高级开箱直接调用 openChest 后写入的服务端冷却截止时间（Unix 毫秒）。
+    /// 官方 UI 可能残留 reward-btn，普通自动开箱必须用这个门禁避免误点。
+    pub left_cooldown_until_ms: Arc<AtomicU64>,
+    pub right_cooldown_until_ms: Arc<AtomicU64>,
     /// 开启自动开箱时置位，让 worker 立即重扫，而不是等当前冷却睡眠结束。
     wake: Arc<AtomicBool>,
 }
@@ -109,7 +113,9 @@ fn predict_place(rect: uia::Rect, dock: uia::Rect) -> Place {
 /// 同一侧只保留一条（合并就绪标记、取更小的剩余时间）
 fn push_chest(list: &mut Vec<UiaChest>, c: UiaChest) {
     if let Some(slot) = list.iter_mut().find(|x| x.place == c.place) {
-        slot.ready = slot.ready || c.ready;
+        // 冷却期间官方可能同时保留 reward-btn 和 reward-countdown；
+        // 同一侧只要出现 countdown，就不能视为就绪。
+        slot.ready = slot.ready && c.ready;
         slot.remain = match (slot.remain, c.remain) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (None, b) => b,
@@ -165,8 +171,17 @@ impl ChestController {
             snapshot: Arc::new(Mutex::new(ChestSnapshot::default())),
             opens_ok: Arc::new(AtomicU64::new(0)),
             opens_failed: Arc::new(AtomicU64::new(0)),
+            left_cooldown_until_ms: Arc::new(AtomicU64::new(0)),
+            right_cooldown_until_ms: Arc::new(AtomicU64::new(0)),
             wake: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn cooldown_handles(&self) -> (Arc<AtomicU64>, Arc<AtomicU64>) {
+        (
+            Arc::clone(&self.left_cooldown_until_ms),
+            Arc::clone(&self.right_cooldown_until_ms),
+        )
     }
 
     pub fn set_enabled(&self, on: bool) {
@@ -182,6 +197,8 @@ impl ChestController {
 
     pub fn start_worker(&self) {
         let enabled = Arc::clone(&self.enabled);
+        let left_cooldown = Arc::clone(&self.left_cooldown_until_ms);
+        let right_cooldown = Arc::clone(&self.right_cooldown_until_ms);
         let shutdown = Arc::clone(&self.shutdown);
         let snapshot = Arc::clone(&self.snapshot);
         let opens_ok = Arc::clone(&self.opens_ok);
@@ -315,7 +332,25 @@ impl ChestController {
                             next_check = Instant::now() + Duration::from_secs(15);
                             continue;
                         }
-                        UiaProbe::Hit(chests) => {
+                        UiaProbe::Hit(mut chests) => {
+                            // 高级开箱绕过官方 UI 直接调用 openChest 后，官方可能仍残留
+                            // reward-btn。共享冷却优先于 DOM，避免点击冷却中的宝箱。
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            for c in chests.iter_mut() {
+                                let until = match c.place {
+                                    Place::Left => left_cooldown.load(Ordering::Relaxed),
+                                    Place::Right => right_cooldown.load(Ordering::Relaxed),
+                                };
+                                if until > now_ms {
+                                    c.ready = false;
+                                    let remain = ((until - now_ms).div_ceil(1000))
+                                        .min(u32::MAX as u64) as u32;
+                                    c.remain = Some(c.remain.map_or(remain, |r| r.min(remain)));
+                                }
+                            }
                             let mut min_remain: Option<u32> = None;
                             let mut any_ready = false;
                             let now_unix = std::time::SystemTime::now()
@@ -505,8 +540,23 @@ impl ChestController {
                 let mut cooldown_any = false;
                 let mut unknown_any = false;
 
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
                 for anchor in anchors.iter() {
-                    let (state, text) = readiness_of(anchor, pet.origin, &pet);
+                    let (mut state, mut text) = readiness_of(anchor, pet.origin, &pet);
+                    let until = match anchor.place {
+                        Place::Left => left_cooldown.load(Ordering::Relaxed),
+                        Place::Right => right_cooldown.load(Ordering::Relaxed),
+                    };
+                    if state == Readiness::Ready && until > now_ms {
+                        state = Readiness::Cooldown;
+                        text = format!(
+                            "高级冷却 {}",
+                            uia::fmt_mmss(((until - now_ms).div_ceil(1000)) as u32)
+                        );
+                    }
                     match anchor.place {
                         Place::Left => left_state = text.clone(),
                         Place::Right => right_state = text.clone(),
@@ -703,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn push_chest_merges_same_place() {
+    fn push_chest_countdown_wins_same_place() {
         let mut list = Vec::new();
         push_chest(
             &mut list,
@@ -724,8 +774,33 @@ mod tests {
             },
         );
         assert_eq!(list.len(), 1);
-        assert!(list[0].ready);
+        assert!(!list[0].ready);
         assert_eq!(list[0].remain, Some(5));
+    }
+
+    #[test]
+    fn push_chest_ready_then_countdown_is_cooling() {
+        let mut list = Vec::new();
+        push_chest(
+            &mut list,
+            UiaChest {
+                place: Place::Right,
+                ready: true,
+                remain: None,
+                click: (2, 2),
+            },
+        );
+        push_chest(
+            &mut list,
+            UiaChest {
+                place: Place::Right,
+                ready: false,
+                remain: Some(20),
+                click: (2, 2),
+            },
+        );
+        assert_eq!(list.len(), 1);
+        assert!(!list[0].ready);
     }
 
     #[test]

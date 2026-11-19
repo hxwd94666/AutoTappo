@@ -4,12 +4,14 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use windows::core::{s, w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
+use crate::logging;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -18,10 +20,10 @@ use windows::Win32::System::Memory::{
     VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessW, CreateRemoteThread, OpenProcess, QueryFullProcessImageNameW, ResumeThread,
-    TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, INFINITE,
-    PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-    STARTUPINFOW,
+    CreateProcessW, CreateRemoteThread, GetExitCodeProcess, GetExitCodeThread, OpenProcess,
+    QueryFullProcessImageNameW, ResumeThread, TerminateProcess, WaitForSingleObject,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, STARTUPINFOW,
 };
 
 pub const CDP_PORT: u16 = 9223;
@@ -66,6 +68,139 @@ fn process_path(pid: u32) -> Option<PathBuf> {
             return None;
         }
         Some(PathBuf::from(String::from_utf16_lossy(&buf[..size as usize])))
+    }
+}
+
+fn process_exit_code(pid: u32) -> Option<u32> {
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code).is_ok();
+        let _ = CloseHandle(h);
+        if ok { Some(code) } else { None }
+    }
+}
+
+fn descendant_pids(root: u32) -> Vec<u32> {
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return Vec::new() };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut ok = Process32FirstW(snap, &mut entry).is_ok();
+        while ok {
+            pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            ok = Process32NextW(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+
+        let mut out = Vec::new();
+        let mut frontier = vec![root];
+        while let Some(parent) = frontier.pop() {
+            for (pid, ppid) in &pairs {
+                if *ppid == parent && *pid != root && !out.contains(pid) {
+                    out.push(*pid);
+                    frontier.push(*pid);
+                }
+            }
+        }
+        out
+    }
+}
+
+fn terminate_tree(pid: u32) -> Result<(), String> {
+    let children = descendant_pids(pid);
+    logging::info(
+        "inject",
+        format!("结束旧桌宠进程树 root={pid} children={children:?}"),
+    );
+    for child in children.iter().rev() {
+        if let Err(e) = terminate(*child) {
+            logging::warn("inject", format!("结束子进程失败 pid={child}: {e}"));
+        }
+    }
+    terminate(pid)
+}
+
+fn hook_log_path(pid: u32) -> PathBuf {
+    crate::logging::dir().join(format!("hook-{pid}.log"))
+}
+
+fn log_webview_snapshot(wuwa_pid: u32) {
+    let script = "$OutputEncoding=[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+        .to_string()
+        + &format!(
+            "Write-Output '--- Wuwa Pid ---'; Write-Output '{wuwa_pid}';
+             Write-Output '--- WebView2 ---';
+             Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Select-Object ProcessId,ParentProcessId,CommandLine | Format-List;
+             Write-Output '--- Port 9223 ---';
+             Get-NetTCPConnection -LocalPort 9223 -ErrorAction SilentlyContinue | Select-Object State,LocalAddress,LocalPort,OwningProcess | Format-List;
+             Write-Output '--- End ---'"
+        );
+    logging::info("webview", format!("采集 WebView2 进程快照 wuwa_pid={wuwa_pid}"));
+    match std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(0x08000000)
+        .output()
+    {
+        Ok(output) => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines().take(500) {
+                logging::info("webview", line);
+            }
+            if !output.status.success() {
+                logging::warn(
+                    "webview",
+                    format!("WebView2 快照命令失败: {}", output.status),
+                );
+            }
+        }
+        Err(e) => logging::warn("webview", format!("无法采集 WebView2 快照: {e}")),
+    }
+}
+
+fn copy_hook_log(pid: u32) {
+    let target = hook_log_path(pid);
+    if !target.exists() {
+        let fallback = std::env::temp_dir().join(format!("autotappo-hook-{pid}.log"));
+        if fallback.exists() {
+            let _ = std::fs::copy(&fallback, &target);
+        }
+    }
+    if target.exists() {
+        logging::info("hook", format!("Hook 日志: {}", target.display()));
+    } else {
+        logging::warn("hook", format!("Hook 日志不存在: {}", target.display()));
+    }
+}
+
+fn webview_process_count() -> usize {
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return 0 };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut count = 0usize;
+        let mut ok = Process32FirstW(snap, &mut entry).is_ok();
+        while ok {
+            let name = String::from_utf16_lossy(&entry.szExeFile);
+            if name.trim_end_matches('\0').eq_ignore_ascii_case("msedgewebview2.exe") {
+                count += 1;
+            }
+            ok = Process32NextW(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+        count
     }
 }
 
@@ -259,8 +394,15 @@ fn inject_dll(process: HANDLE, dll: &Path) -> Result<(), String> {
         let thread = CreateRemoteThread(process, None, 0, Some(start), Some(remote), 0, None)
             .map_err(|e| format!("CreateRemoteThread 失败: {e:?}"))?;
         WaitForSingleObject(thread, INFINITE);
+        let mut load_result = 0u32;
+        let _ = GetExitCodeThread(thread, &mut load_result);
         let _ = CloseHandle(thread);
         let _ = VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        if load_result == 0 {
+            logging::error("inject", "LoadLibraryW 返回 0，DLL 加载失败");
+            return Err("LoadLibraryW 返回 0，DLL 加载失败（依赖缺失或被拦截）".into());
+        }
+        logging::info("inject", format!("LoadLibraryW 成功 handle=0x{load_result:X}"));
         Ok(())
     }
 }
@@ -281,7 +423,45 @@ fn start_process(exe: &Path, inject: Option<&Path>) -> Result<u32, String> {
         } else {
             CREATE_UNICODE_ENVIRONMENT
         };
-        CreateProcessW(
+        let cwd_wide: Option<Vec<u16>> = exe.parent().map(|dir| {
+            dir.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        });
+        let cwd_ptr = cwd_wide
+            .as_ref()
+            .map_or(PCWSTR::null(), |v| PCWSTR(v.as_ptr()));
+        logging::info(
+            "inject",
+            format!(
+                "启动工作目录: {}",
+                exe.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            ),
+        );
+        let env_key = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+        let old_env = std::env::var_os(env_key);
+        let hook_log_key = "AUTOTAPPO_HOOK_LOG_DIR";
+        let old_hook_log = std::env::var_os(hook_log_key);
+        if inject.is_some() {
+            let log_dir = crate::logging::dir();
+            let _ = std::fs::create_dir_all(&log_dir);
+            std::env::set_var(hook_log_key, &log_dir);
+            logging::info("inject", format!("设置 {hook_log_key}={}", log_dir.display()));
+            let mut value = old_env
+                .as_ref()
+                .map(|v| v.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !value.contains("--remote-debugging-port") {
+                if !value.is_empty() && !value.ends_with(' ') {
+                    value.push(' ');
+                }
+                value.push_str("--remote-debugging-port=9223");
+            }
+            std::env::set_var(env_key, &value);
+            logging::info("inject", format!("设置 {env_key}={value}"));
+        }
+        let created = CreateProcessW(
             PCWSTR::null(),
             PWSTR(cmd.as_mut_ptr()),
             None,
@@ -289,11 +469,21 @@ fn start_process(exe: &Path, inject: Option<&Path>) -> Result<u32, String> {
             false,
             flags,
             None,
-            PCWSTR::null(),
+            cwd_ptr,
             &si,
             &mut pi,
-        )
-        .map_err(|e| format!("CreateProcessW 失败: {e:?}"))?;
+        );
+        if inject.is_some() {
+            match old_env {
+                Some(value) => std::env::set_var(env_key, value),
+                None => std::env::remove_var(env_key),
+            }
+            match old_hook_log {
+                Some(value) => std::env::set_var(hook_log_key, value),
+                None => std::env::remove_var(hook_log_key),
+            }
+        }
+        created.map_err(|e| format!("CreateProcessW 失败: {e:?}"))?;
 
         if let Some(dll) = inject {
             if let Err(e) = inject_dll(pi.hProcess, dll) {
@@ -312,14 +502,18 @@ fn start_process(exe: &Path, inject: Option<&Path>) -> Result<u32, String> {
 
 /// 确保桌宠以「带 CDP 端口」的方式运行。会强杀一次旧桌宠。
 pub fn ensure_cdp_pet() -> Result<(), String> {
+    logging::info("inject", "ensure_cdp_pet 开始");
     if cdp_alive() {
+        logging::info("inject", "CDP 已在线，无需注入");
         return Ok(());
     }
     let dll = dll_path()?;
+    logging::info("inject", format!("DLL: {}", dll.display()));
     let exe = match find_pet_pid() {
         Some(pid) => {
             let running_path = process_path(pid);
-            terminate(pid)?;
+            logging::info("inject", format!("结束旧桌宠 pid={pid}"));
+            terminate_tree(pid)?;
             let _ = wait_gone(pid, Duration::from_secs(5));
             running_path
                 .filter(|p| p.is_file())
@@ -328,14 +522,43 @@ pub fn ensure_cdp_pet() -> Result<(), String> {
         }
         None => discover_pet_path().ok_or_else(|| "找不到 WuwaTappo.exe（自动发现失败）".to_string())?,
     };
-    start_process(&exe, Some(&dll))?;
+    logging::info("inject", format!("启动并注入: {}", exe.display()));
+    let pid = start_process(&exe, Some(&dll))?;
+    logging::info("inject", format!("启动完成 pid={pid}，等待 CDP"));
+    std::thread::sleep(Duration::from_millis(300));
+    copy_hook_log(pid);
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(25) {
         if cdp_alive() {
+            logging::info("inject", "CDP 端口已就绪");
+            copy_hook_log(pid);
             return Ok(());
+        }
+        if let Some(code) = process_exit_code(pid) {
+            if code != 259 {
+                logging::error(
+                    "inject",
+                    format!(
+                        "WuwaTappo 提前退出 pid={pid} exit_code={code} webview2_count={}",
+                        webview_process_count()
+                    ),
+                );
+                log_webview_snapshot(pid);
+                return Err(format!("WuwaTappo 已退出 (exit code {code})"));
+            }
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+    logging::error(
+        "inject",
+        format!(
+            "CDP 端口未在 25 秒内就绪 pid={pid} exit_code={:?} webview2_count={}",
+            process_exit_code(pid),
+            webview_process_count()
+        ),
+    );
+    copy_hook_log(pid);
+    log_webview_snapshot(pid);
     Err("CDP 端口未在 25 秒内就绪".into())
 }
 

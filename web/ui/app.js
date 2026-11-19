@@ -32,11 +32,14 @@
   const chestSwitch = $("chest-switch");
   const advSwitch = $("adv-switch");
   const advSub = $("adv-sub");
-  const arrangeSwitch = $("arrange-switch");
   const arrangeSub = $("arrange-sub");
   const layoutGroup = $("layout-group");
   const layoutToggle = $("layout-toggle");
   const layoutGroupBody = $("layout-group-body");
+  const layoutManualBtn = $("layout-manual");
+  const layoutAutoBtn = $("layout-auto");
+  const layoutModeKindSub = $("layout-mode-kind-sub");
+  const layoutDirectionRow = $("layout-direction-row");
   const layoutHLeftBtn = $("layout-h-left");
   const layoutHRightBtn = $("layout-h-right");
   const layoutVUpBtn = $("layout-v-up");
@@ -52,6 +55,7 @@
   const layoutEditHotkeyBtn = $("layout-edit-hotkey");
   const layoutEditSub = $("layout-edit-sub");
   const autostartSwitch = $("autostart-switch");
+  const btnLogs = $("btn-logs");
   const btnMin = $("btn-min");
   const btnClose = $("btn-close");
   const confirmModal = $("confirm-modal");
@@ -65,7 +69,7 @@
   let currentHotkeyVK = parseInt(localStorage.getItem("autotappo_hotkey_vk"), 10) || 0x74;
   let autoChest = localStorage.getItem("autotappo.autoChest") === "1";
   let advancedEnabled = false;
-  let autoArrange = false;
+  let layoutManual = true;
   let layoutMode = "h-right";
   let layoutWrap = 0;
   let layoutWrapDir = 0;
@@ -185,15 +189,6 @@
     layoutGroupBody.hidden = !layoutExpanded;
   }
 
-  function layoutModeLabel(mode) {
-    if (mode === 'h-left') return '横左';
-    if (mode === 'h-right') return '横右';
-    if (mode === 'v-up') return '竖上';
-    if (mode === 'v-down') return '竖下';
-    if (mode === 'overlap') return '重叠';
-    return '横右';
-  }
-
   function layoutModeHint(mode) {
     if (mode === 'h-left') return '好友从自己左侧同排开始';
     if (mode === 'v-up') return '好友从自己上方同列开始';
@@ -203,60 +198,72 @@
 
   function renderLayoutHotkeys() {
     if (!advancedEnabled) {
-      autoArrange = false;
       layoutEditing = false;
       layoutRecording = null;
     }
-    arrangeSwitch.disabled = !advancedEnabled;
-    arrangeSwitch.setAttribute('aria-disabled', advancedEnabled ? 'false' : 'true');
-    arrangeSwitch.setAttribute('aria-checked', autoArrange ? 'true' : 'false');
     const overlapMode = layoutMode === 'overlap';
     if (overlapMode) layoutEditing = false;
-    const layoutDisabled = !advancedEnabled || !autoArrange || layoutEditing;
-    layoutHLeftBtn.disabled = layoutDisabled;
-    layoutHRightBtn.disabled = layoutDisabled;
-    layoutVUpBtn.disabled = layoutDisabled;
-    layoutVDownBtn.disabled = layoutDisabled;
-    layoutOverlapBtn.disabled = layoutDisabled;
+    const autoMode = advancedEnabled && !layoutManual;
+    layoutManualBtn.disabled = !advancedEnabled;
+    layoutAutoBtn.disabled = !advancedEnabled;
+    layoutManualBtn.classList.toggle('active', layoutManual);
+    layoutAutoBtn.classList.toggle('active', !layoutManual);
+    layoutModeKindSub.textContent = !advancedEnabled
+      ? '开启高级开箱后可用'
+      : (layoutManual ? '手动：按 F6 编辑，自动补位关闭' : '自动：按方向与换行排列');
+    layoutDirectionRow.hidden = false;
+    layoutWrapRow.hidden = false;
+    layoutWrapDirRow.hidden = false;
+    const directionDisabled = !autoMode || layoutEditing;
+    layoutHLeftBtn.disabled = directionDisabled;
+    layoutHRightBtn.disabled = directionDisabled;
+    layoutVUpBtn.disabled = directionDisabled;
+    layoutVDownBtn.disabled = directionDisabled;
+    layoutOverlapBtn.disabled = directionDisabled;
     layoutHLeftBtn.classList.toggle('active', layoutMode === 'h-left');
     layoutHRightBtn.classList.toggle('active', layoutMode === 'h-right');
     layoutVUpBtn.classList.toggle('active', layoutMode === 'v-up');
     layoutVDownBtn.classList.toggle('active', layoutMode === 'v-down');
     layoutOverlapBtn.classList.toggle('active', overlapMode);
-    layoutModeSub.textContent = !advancedEnabled || !autoArrange
-      ? '开启位置排列后可用'
+    layoutModeSub.textContent = !autoMode
+      ? '自动模式可用；手动模式不按方向排列'
       : (overlapMode ? '所有好友叠在自己身后，拖动时跟随' : layoutModeHint(layoutMode));
-    layoutWrapRow.hidden = overlapMode;
-    layoutWrapInput.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    layoutWrapInput.disabled = !autoMode || overlapMode;
     if (document.activeElement !== layoutWrapInput) {
       layoutWrapInput.value = layoutWrap > 0 ? String(layoutWrap) : '';
     }
-    layoutWrapSub.textContent = overlapMode
-      ? '重叠模式不使用换行'
-      : (layoutMode === 'h-left' || layoutMode === 'h-right'
-        ? '每行数量，包含自己；0 或空为到顶'
-        : '每列数量，包含自己；0 或空为到顶');
+    layoutWrapSub.textContent = !autoMode
+      ? '自动模式可用'
+      : (overlapMode
+        ? '重叠模式不使用换行'
+        : (layoutMode === 'h-left' || layoutMode === 'h-right'
+          ? '每行数量，包含自己；0 或空为到顶'
+          : '每列数量，包含自己；0 或空为到顶'));
     const horizontalMode = layoutMode === 'h-left' || layoutMode === 'h-right';
-    layoutWrapDirRow.hidden = overlapMode;
-    layoutWrapDirSelect.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    layoutWrapDirSelect.disabled = !autoMode || overlapMode;
     layoutWrapDirSelect.options[0].textContent = horizontalMode ? '向下' : '向右';
     layoutWrapDirSelect.options[1].textContent = horizontalMode ? '向上' : '向左';
     layoutWrapDirSelect.value = String(layoutWrapDir);
-    layoutWrapDirSub.textContent = overlapMode
-      ? '重叠模式不使用换行方向'
-      : (horizontalMode
-        ? (layoutWrapDir === 1 ? '换行到上一行' : '换行到下一行')
-        : (layoutWrapDir === 1 ? '换行到左侧一列' : '换行到右侧一列'));
-    layoutEditHotkeyBtn.disabled = !advancedEnabled || !autoArrange || overlapMode;
+    layoutWrapDirSub.textContent = !autoMode
+      ? '自动模式可用'
+      : (overlapMode
+        ? '重叠模式不使用换行方向'
+        : (horizontalMode
+          ? (layoutWrapDir === 1 ? '换行到上一行' : '换行到下一行')
+          : (layoutWrapDir === 1 ? '换行到左侧一列' : '换行到右侧一列')));
+    layoutEditHotkeyBtn.disabled = !advancedEnabled || !layoutManual || overlapMode;
     layoutEditHotkeyBtn.classList.toggle('recording', layoutRecording === 'edit');
     layoutEditHotkeyBtn.textContent = layoutRecording === 'edit' ? '…' : layoutEditHotkeyName;
     arrangeSub.textContent = !advancedEnabled
       ? '需先开启高级开箱'
-      : (autoArrange ? '已开启 · ' + layoutModeLabel(layoutMode) : '已关闭');
-    layoutEditSub.textContent = !advancedEnabled || !autoArrange
-      ? '开启位置排列后可用'
-      : (overlapMode ? '重叠模式不使用编辑' : (layoutEditing ? '手动布局 · 编辑中，按第二次完成编辑' : '手动布局 · 按一次进入编辑，按第二次完成编辑'));
+      : (layoutManual ? '已开启 · 手动' : '已开启 · 自动');
+    layoutEditSub.textContent = !advancedEnabled
+      ? '开启高级开箱后可用'
+      : (layoutManual
+        ? (layoutEditing ? '手动布局 · 编辑中，按第二次完成编辑' : '手动布局 · 按一次进入编辑，按第二次完成编辑')
+        : '自动模式不使用手动布局');
   }
+
 
 
   async function syncLayoutHotkeys() {
@@ -267,7 +274,7 @@
     }
     try {
       if (advancedEnabled) {
-        autoArrange = !!(await invoke("get_auto_arrange"));
+        layoutManual = !!(await invoke("get_layout_manual"));
         const modeValue = String(await invoke("get_layout_mode"));
         layoutMode = ["h-left", "h-right", "v-up", "v-down", "overlap"].includes(modeValue) ? modeValue : "h-right";
         layoutWrap = Math.max(0, Number(await invoke("get_layout_wrap")) || 0);
@@ -351,10 +358,12 @@
     const detail = String(s.detail || "");
     let text = detail || "高级开箱运行中";
     if (state === "ready") text = "运行中 · " + (detail || "CDP 已就绪");
-    else if (state === "waiting") text = "运行中 · " + (detail || "等待锁屏 / 隐藏条件");
+    else if (state === "waiting") {
+      text = "运行中 · " + (detail.startsWith("等待游戏主页面") ? "等待游戏页面" : (detail || "等待锁屏 / 隐藏条件"));
+    }
     else if (state === "opened") text = "运行中 · " + (detail || "已开启宝箱");
     else if (state === "starting") text = detail || "正在检查桌宠…";
-    else if (state === "error") text = detail || "高级开箱运行失败";
+    else if (state === "error") text = "高级开箱失败，请查看日志";
     setAdvSub(text, state === "error");
   }
 
@@ -608,30 +617,28 @@
   }
 
   layoutToggle.addEventListener("click", (event) => {
-    if (event.target.closest("#arrange-switch")) return;
     toggleLayoutGroup();
   });
   layoutToggle.addEventListener("keydown", (event) => {
-    if (event.target.closest("#arrange-switch")) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     toggleLayoutGroup();
   });
 
-  arrangeSwitch.addEventListener("click", async (event) => {
-    event.stopPropagation();
+  async function applyLayoutKind(manual) {
     if (!isTauri || !advancedEnabled) return;
-    const next = !autoArrange;
     try {
-      autoArrange = !!(await invoke("set_auto_arrange", { enabled: next }));
-    } catch (e) {
-      autoArrange = false;
-    }
+      layoutManual = !!(await invoke("set_layout_manual", { manual }));
+      layoutEditing = false;
+    } catch (e) {}
     renderLayoutHotkeys();
-  });
+  }
+
+  layoutManualBtn.addEventListener("click", () => applyLayoutKind(true));
+  layoutAutoBtn.addEventListener("click", () => applyLayoutKind(false));
 
   async function applyLayoutMode(mode) {
-    if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
+    if (!isTauri || !advancedEnabled || layoutManual || layoutEditing) return;
     try {
       const actual = String(await invoke("set_layout_mode", { mode }));
       layoutMode = ["h-left", "h-right", "v-up", "v-down", "overlap"].includes(actual) ? actual : "h-right";
@@ -645,7 +652,7 @@
   layoutVDownBtn.addEventListener("click", () => applyLayoutMode("v-down"));
   layoutOverlapBtn.addEventListener("click", () => applyLayoutMode("overlap"));
   layoutWrapInput.addEventListener("change", async () => {
-    if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
+    if (!isTauri || !advancedEnabled || layoutManual || layoutEditing) return;
     let wrap = Math.floor(Number(layoutWrapInput.value) || 0);
     wrap = Math.max(0, Math.min(20, wrap));
     if (wrap === 1) wrap = 2;
@@ -655,7 +662,7 @@
     renderLayoutHotkeys();
   });
   layoutWrapDirSelect.addEventListener("change", async () => {
-    if (!isTauri || !advancedEnabled || !autoArrange || layoutEditing) return;
+    if (!isTauri || !advancedEnabled || layoutManual || layoutEditing) return;
     const dir = Number(layoutWrapDirSelect.value) === 1 ? 1 : 0;
     try {
       layoutWrapDir = Number(await invoke("set_layout_wrap_dir", { dir })) === 1 ? 1 : 0;
@@ -685,7 +692,16 @@
     }
   });
 
-  // 自绘标题栏的最小化 / 关闭
+  // 自绘标题栏的日志 / 最小化 / 关闭
+  btnLogs.addEventListener("click", async () => {
+    if (!isTauri) return;
+    try {
+      await invoke("open_log_dir");
+    } catch (e) {
+      alert("打开日志文件夹失败：" + e);
+    }
+  });
+
   btnMin.addEventListener("click", async () => {
     if (isTauri) await invoke("minimize_window").catch(() => {});
   });
