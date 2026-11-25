@@ -271,6 +271,26 @@ impl AdvancedController {
 
                 set_status(&status, "ready", "CDP 已就绪", true, true);
 
+                // 无论高级开箱当前是否接管，都把官方 Pinia 冷却共享给普通自动开箱。
+                // 普通自动开箱点击后图标可能不刷新，但 Pinia 的时间戳通常已更新。
+                let shared_now = state["now"].as_u64().unwrap_or(0);
+                if let Some(t) = state["left"].as_u64() {
+                    if t > shared_now {
+                        let prev = left_cooldown.fetch_max(t, Ordering::Relaxed);
+                        if t > prev {
+                            logging::info("advanced", format!("共享左侧冷却 until={t}"));
+                        }
+                    }
+                }
+                if let Some(t) = state["right"].as_u64() {
+                    if t > shared_now {
+                        let prev = right_cooldown.fetch_max(t, Ordering::Relaxed);
+                        if t > prev {
+                            logging::info("advanced", format!("共享右侧冷却 until={t}"));
+                        }
+                    }
+                }
+
                 // 5. 只在用户勾选的场景下接管
                 let locked = session::desktop_locked();
                 let pet_hidden = matches!(chest::pet_input_visible(), Some(false));
